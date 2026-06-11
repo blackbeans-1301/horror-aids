@@ -1,0 +1,3 @@
+[submodule ".ai"]
+	path = .ai
+	url = git@github.com:blackbeans-1301/dot-ai.git
