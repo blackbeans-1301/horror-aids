@@ -20,6 +20,13 @@
 # production
 /build
 
+# local Horror Aids workspace data
+/data/
+/stories/
+
+# local worker/runtime config
+/config/local*.json
+
 # misc
 .DS_Store
 *.pem

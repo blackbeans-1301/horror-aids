@@ -1,36 +1,51 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Horror Aids
 
-## Getting Started
+Local-first Vietnamese horror audio production studio.
 
-First, run the development server:
+The MVP lets one creator write a story, process it into narrator/character
+segments, generate segment WAV files through VieNue TTS, verify each segment
+with Whisper, confirm verified output in the UI, then concatenate one final WAV
+with FFmpeg.
+
+## Requirements
+
+- Node.js 20+
+- Python 3.10+
+- FFmpeg for final WAV concat
+- Optional: local Whisper CLI
+- Optional: local VieNue TTS OpenAI-compatible host
+
+The workers include explicit local fallback modes for development verification:
+
+- `HORROR_AIDS_FAKE_TTS=1`
+- `HORROR_AIDS_FAKE_WHISPER=1`
+
+Production use should point the app at VieNue:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+cp .env.example .env.local
+# edit VIENUE_TTS_BASE_URL, VIENUE_TTS_MODEL, and voice IDs in the UI
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Run
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+npm install
+npm run dev
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Open `http://localhost:3000`.
 
-## Learn More
+## Workflow
 
-To learn more about Next.js, take a look at the following resources:
+1. Create a story workspace.
+2. Write story text.
+3. Process story into characters and segments.
+4. Assign VieNue voice IDs.
+5. Accept segments for TTS.
+6. Generate and verify audio.
+7. Confirm verified output.
+8. Concatenate final WAV.
+9. Approve final audio.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Generated story data lives under `stories/[story-slug]/` and is ignored by git.

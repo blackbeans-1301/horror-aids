@@ -1,0 +1,17 @@
+{
+  "vienue": {
+    "baseUrl": "",
+    "endpoint": "/v1/audio/speech",
+    "model": "default"
+  },
+  "whisper": {
+    "model": "base",
+    "language": "vi",
+    "minTextRatio": 0.6,
+    "maxAttempts": 3
+  },
+  "audio": {
+    "sampleRate": 22050,
+    "channels": 1
+  }
+}
