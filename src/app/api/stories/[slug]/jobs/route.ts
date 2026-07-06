@@ -9,6 +9,7 @@ interface StoryRouteContext {
 
 interface StartJobPayload {
   type?: unknown;
+  segmentIds?: unknown;
 }
 
 const jobTypes = new Set<JobType>([
@@ -28,8 +29,15 @@ export async function POST(
     return NextResponse.json({ error: 'Invalid job type' }, { status: 400 });
   }
 
+  const segmentIds = Array.isArray(body.segmentIds)
+    ? body.segmentIds
+        .filter((id): id is string => typeof id === 'string')
+        .map((id) => id.trim())
+        .filter(Boolean)
+    : undefined;
+
   try {
-    const job = await startStoryJob(slug, body.type as JobType);
+    const job = await startStoryJob(slug, body.type as JobType, { segmentIds });
     return NextResponse.json({ job }, { status: 202 });
   } catch (error) {
     return NextResponse.json(

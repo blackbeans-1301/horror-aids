@@ -125,11 +125,14 @@ export interface SegmentVerification {
   transcriptPreview: string | null;
 }
 
+export type SegmentEmotion = 'natural' | 'storytelling';
+
 export interface SegmentRecord {
   id: string;
   order: number;
   speakerId: string;
   text: string;
+  emotion: SegmentEmotion;
   audioPath: string;
   whisperTranscriptPath: string;
   status: SegmentStatus;

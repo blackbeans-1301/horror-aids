@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { AudioLines } from 'lucide-react';
+import { AudioLines, Settings } from 'lucide-react';
 
 interface AppShellProps {
   children: React.ReactNode;
@@ -16,6 +16,10 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
           <span>Horror Aids</span>
         </Link>
         <span className="badge">Local audio studio</span>
+        <Link className="button secondary" href="/settings">
+          <Settings size={15} aria-hidden="true" />
+          TTS Settings
+        </Link>
       </header>
       {children}
     </div>

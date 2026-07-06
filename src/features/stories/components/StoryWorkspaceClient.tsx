@@ -6,24 +6,29 @@ import {
   Check,
   FileText,
   ListChecks,
+  ListMusic,
   Play,
   RefreshCw,
   Save,
   Scissors,
+  SkipBack,
+  SkipForward,
+  Square,
   Terminal,
   Trash2,
   Users,
   Wand2,
 } from 'lucide-react';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { storiesApi } from '@/features/stories/api/storiesApi';
+import { storiesApi, type VoiceOption } from '@/features/stories/api/storiesApi';
 import { AppShell } from '@/features/stories/components/AppShell';
 import type {
   CharacterRecord,
   CharacterRole,
   JobRecord,
   JobType,
+  SegmentEmotion,
   SegmentRecord,
   StoryDetail,
 } from '@/types/story';
@@ -59,6 +64,13 @@ function segmentAudioPath(segment: SegmentRecord): string {
   return segment.audioPath;
 }
 
+function nextLocalSegmentId(segments: SegmentRecord[]): number {
+  return segments.reduce((max, segment) => {
+    const parsed = Number.parseInt(segment.id, 10);
+    return Number.isFinite(parsed) ? Math.max(max, parsed) : max;
+  }, 0) + 1;
+}
+
 function createEmptySegment(order: number, speakerId = 'narrator'): SegmentRecord {
   const id = `${order}`.padStart(4, '0');
   return {
@@ -66,6 +78,7 @@ function createEmptySegment(order: number, speakerId = 'narrator'): SegmentRecor
     order,
     speakerId,
     text: '',
+    emotion: speakerId === 'narrator' ? 'storytelling' : 'natural',
     audioPath: `audio/segments/${id}-${speakerId}.wav`,
     whisperTranscriptPath: `tmp/whisper/${id}-${speakerId}.txt`,
     status: 'pending',
@@ -88,14 +101,23 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
   const [selectedJobId, setSelectedJobId] = useState<string>('');
   const [jobLog, setJobLog] = useState<string>('');
   const [isBusy, setIsBusy] = useState<boolean>(false);
+  // Unsaved local edits must survive the 3s polling refresh; each flag blocks
+  // the server snapshot from overwriting that piece of state until saved.
+  const dirtyRef = useRef({ story: false, characters: false, segments: false });
 
   const refresh = useCallback(async (): Promise<void> => {
     try {
       const nextDetail = await storiesApi.detail(slug);
       setDetail(nextDetail);
-      setStoryText(nextDetail.storyText);
-      setCharacters(nextDetail.characters.characters);
-      setSegments(nextDetail.segments.segments);
+      if (!dirtyRef.current.story) {
+        setStoryText(nextDetail.storyText);
+      }
+      if (!dirtyRef.current.characters) {
+        setCharacters(nextDetail.characters.characters);
+      }
+      if (!dirtyRef.current.segments) {
+        setSegments(nextDetail.segments.segments);
+      }
       setSelectedJobId((current) => current || nextDetail.recentJobs[0]?.id || '');
       setMessage('');
     } catch (error) {
@@ -131,6 +153,65 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
     );
   }, [characters, segments.length, usedSpeakerIds]);
 
+  // Sequential preview player: plays verified segments in story order and
+  // auto-advances, so the full story can be heard before concat.
+  const [playerIndex, setPlayerIndex] = useState<number | null>(null);
+  const [voices, setVoices] = useState<VoiceOption[]>([]);
+  const [voicesError, setVoicesError] = useState<string>('');
+  const [regenSelection, setRegenSelection] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    void storiesApi
+      .voices()
+      .then((data) => {
+        setVoices(data.voices);
+        setVoicesError(data.voices.length === 0 ? data.error ?? '' : '');
+      })
+      .catch(() => setVoicesError('Could not load voices from the TTS server.'));
+  }, []);
+
+  const toggleRegenSelection = useCallback((segmentId: string): void => {
+    setRegenSelection((current) => {
+      const next = new Set(current);
+      if (next.has(segmentId)) {
+        next.delete(segmentId);
+      } else {
+        next.add(segmentId);
+      }
+      return next;
+    });
+  }, []);
+
+  const playableSegments = useMemo(() => {
+    return segments.filter(
+      (segment) =>
+        segment.status !== 'skipped' &&
+        (segment.verification.status === 'passed' || segment.status === 'complete'),
+    );
+  }, [segments]);
+
+  const playingSegment =
+    playerIndex !== null ? playableSegments[playerIndex] ?? null : null;
+
+  const playFromSegment = useCallback(
+    (segmentId: string): void => {
+      const index = playableSegments.findIndex((segment) => segment.id === segmentId);
+      if (index >= 0) {
+        setPlayerIndex(index);
+      }
+    },
+    [playableSegments],
+  );
+
+  const handleSegmentEnded = useCallback((): void => {
+    setPlayerIndex((current) => {
+      if (current === null) {
+        return null;
+      }
+      return current < playableSegments.length - 1 ? current + 1 : null;
+    });
+  }, [playableSegments.length]);
+
   const allVerified = useMemo(() => {
     return (
       segments.length > 0 &&
@@ -151,13 +232,13 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
   const canConcat = verifiedApproval === 'approved' && !hasActiveJob;
 
   const runAction = useCallback(
-    async (label: string, action: () => Promise<void>): Promise<void> => {
+    async (label: string, action: () => Promise<void>, successMessage = ''): Promise<void> => {
       setIsBusy(true);
       setMessage(label);
       try {
         await action();
         await refresh();
-        setMessage('');
+        setMessage(successMessage);
       } catch (error) {
         setMessage(error instanceof Error ? error.message : 'Action failed');
       } finally {
@@ -168,44 +249,61 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
   );
 
   const startJob = useCallback(
-    async (type: JobType): Promise<void> => {
+    async (type: JobType, segmentIds?: string[]): Promise<void> => {
       await runAction('Starting job...', async () => {
-        const job = await storiesApi.startJob(slug, type);
+        const job = await storiesApi.startJob(slug, type, segmentIds);
         setSelectedJobId(job.id);
-        setActiveTab('logs');
+        if (!segmentIds) {
+          setActiveTab('logs');
+        }
       });
     },
     [runAction, slug],
   );
 
   const saveStory = useCallback(async (): Promise<void> => {
-    await runAction('Saving story...', () => storiesApi.saveStoryText(slug, storyText));
+    await runAction('Saving story...', async () => {
+      await storiesApi.saveStoryText(slug, storyText);
+      dirtyRef.current.story = false;
+    }, 'Story saved.');
   }, [runAction, slug, storyText]);
 
   const saveCharacters = useCallback(async (): Promise<void> => {
     await runAction('Saving characters...', async () => {
       await storiesApi.saveCharacters(slug, { characters });
-    });
+      dirtyRef.current.characters = false;
+    }, 'Characters saved.');
   }, [characters, runAction, slug]);
 
   const saveSegments = useCallback(async (): Promise<void> => {
     await runAction('Saving segments...', async () => {
       await storiesApi.saveSegments(slug, { segments });
-    });
+      dirtyRef.current.segments = false;
+    }, 'Segments saved.');
   }, [runAction, segments, slug]);
 
   const approveSegments = useCallback(async (): Promise<void> => {
-    await runAction('Approving segments...', () => storiesApi.approveSegments(slug));
+    await runAction(
+      'Approving segments...',
+      () => storiesApi.approveSegments(slug),
+      'Segments approved. You can now run Generate + verify in the Audio tab.',
+    );
   }, [runAction, slug]);
 
   const confirmVerifiedAudio = useCallback(async (): Promise<void> => {
-    await runAction('Confirming verified output...', () =>
-      storiesApi.confirmVerifiedAudio(slug),
+    await runAction(
+      'Confirming verified output...',
+      () => storiesApi.confirmVerifiedAudio(slug),
+      'Verified output confirmed. Concat final WAV is now unlocked.',
     );
   }, [runAction, slug]);
 
   const approveFinalAudio = useCallback(async (): Promise<void> => {
-    await runAction('Approving final audio...', () => storiesApi.approveFinalAudio(slug));
+    await runAction(
+      'Approving final audio...',
+      () => storiesApi.approveFinalAudio(slug),
+      'Final audio approved. This story is complete.',
+    );
   }, [runAction, slug]);
 
   const loadJobLog = useCallback(
@@ -233,6 +331,7 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
 
   const updateCharacter = useCallback(
     (index: number, patch: Partial<CharacterRecord>): void => {
+      dirtyRef.current.characters = true;
       setCharacters((current) =>
         current.map((character, characterIndex) =>
           characterIndex === index ? { ...character, ...patch } : character,
@@ -244,6 +343,7 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
 
   const addCharacter = useCallback((): void => {
     const id = `character-${characters.length + 1}`;
+    dirtyRef.current.characters = true;
     setCharacters((current) => [
       ...current,
       { id, name: `Character ${current.length + 1}`, role: 'other', voice: '' },
@@ -251,11 +351,13 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
   }, [characters.length]);
 
   const removeCharacter = useCallback((index: number): void => {
+    dirtyRef.current.characters = true;
     setCharacters((current) => current.filter((_, characterIndex) => characterIndex !== index));
   }, []);
 
   const updateSegment = useCallback(
     (index: number, patch: Partial<SegmentRecord>): void => {
+      dirtyRef.current.segments = true;
       setSegments((current) =>
         current.map((segment, segmentIndex) => {
           if (segmentIndex !== index) {
@@ -275,14 +377,34 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
   );
 
   const addSegment = useCallback((): void => {
-    setSegments((current) => [...current, createEmptySegment(current.length + 1)]);
+    dirtyRef.current.segments = true;
+    setSegments((current) => {
+      const inserted = createEmptySegment(nextLocalSegmentId(current));
+      return [...current, { ...inserted, order: current.length + 1 }];
+    });
+  }, []);
+
+  const insertSegmentAfter = useCallback((index: number): void => {
+    dirtyRef.current.segments = true;
+    setSegments((current) => {
+      const anchor = current[index];
+      const inserted = createEmptySegment(
+        nextLocalSegmentId(current),
+        anchor?.speakerId ?? 'narrator',
+      );
+      const next = [...current];
+      next.splice(index + 1, 0, inserted);
+      return next.map((segment, orderIndex) => ({ ...segment, order: orderIndex + 1 }));
+    });
   }, []);
 
   const deleteSegment = useCallback((index: number): void => {
+    dirtyRef.current.segments = true;
     setSegments((current) => current.filter((_, segmentIndex) => segmentIndex !== index));
   }, []);
 
   const splitSegment = useCallback((index: number): void => {
+    dirtyRef.current.segments = true;
     setSegments((current) => {
       const target = current[index];
       if (!target) {
@@ -295,8 +417,9 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
       const midpoint = Math.ceil(words.length / 2);
       const first = words.slice(0, midpoint).join(' ');
       const second = words.slice(midpoint).join(' ');
-      const inserted = createEmptySegment(current.length + 1, target.speakerId);
+      const inserted = createEmptySegment(nextLocalSegmentId(current), target.speakerId);
       inserted.text = second;
+      inserted.emotion = target.emotion;
       const next = [...current];
       next[index] = { ...target, text: first };
       next.splice(index + 1, 0, inserted);
@@ -305,6 +428,7 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
   }, []);
 
   const mergeWithNext = useCallback((index: number): void => {
+    dirtyRef.current.segments = true;
     setSegments((current) => {
       const target = current[index];
       const nextSegment = current[index + 1];
@@ -410,7 +534,14 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
         {activeTab === 'story' ? (
           <section className="panel form">
             <h2>Story Editor</h2>
-            <textarea className="textarea large" value={storyText} onChange={(event) => setStoryText(event.target.value)} />
+            <textarea
+              className="textarea large"
+              value={storyText}
+              onChange={(event) => {
+                dirtyRef.current.story = true;
+                setStoryText(event.target.value);
+              }}
+            />
             <div className="button-row">
               <button className="button" type="button" onClick={saveStory} disabled={isBusy}>
                 <Save size={16} aria-hidden="true" />
@@ -429,7 +560,11 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
             <div className="page-header">
               <div>
                 <h2>Characters And Voices</h2>
-                <p>Every speaker used by segments needs a VieNue voice ID.</p>
+                <p>
+                  Every speaker used by segments needs a VieNue voice. Cloned voices (🎤) come from WAV
+                  files in the TTS server&apos;s voices/ folder — drop a 3-5s reference clip there to add one.
+                </p>
+                {voicesError ? <p className="label">{voicesError}</p> : null}
               </div>
               <button className="button secondary" type="button" onClick={addCharacter}>
                 Add character
@@ -462,7 +597,27 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
                       </select>
                     </td>
                     <td>
-                      <input className="input mono" value={character.voice} onChange={(event) => updateCharacter(index, { voice: event.target.value })} placeholder="vienue_voice_id" />
+                      {voices.length > 0 ? (
+                        <select
+                          className="select"
+                          value={character.voice}
+                          onChange={(event) => updateCharacter(index, { voice: event.target.value })}
+                        >
+                          <option value="">— no voice —</option>
+                          {voices.map((voice) => (
+                            <option key={voice.id} value={voice.id}>
+                              {voice.kind === 'clone' ? '🎤 ' : ''}
+                              {voice.id}
+                              {voice.kind === 'clone' ? ' (cloned)' : ''}
+                            </option>
+                          ))}
+                          {character.voice && !voices.some((voice) => voice.id === character.voice) ? (
+                            <option value={character.voice}>{character.voice} (unknown)</option>
+                          ) : null}
+                        </select>
+                      ) : (
+                        <input className="input mono" value={character.voice} onChange={(event) => updateCharacter(index, { voice: event.target.value })} placeholder="vienue_voice_id" />
+                      )}
                     </td>
                     <td>
                       <button className="button danger" type="button" onClick={() => removeCharacter(index)} disabled={character.role === 'narrator'}>
@@ -485,7 +640,11 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
             <div className="page-header">
               <div>
                 <h2>Segments</h2>
-                <p>Approve these rows before TTS. Editing them later resets verification.</p>
+                <p>
+                  Approve these rows before TTS. Editing them later resets verification. Emotion
+                  &quot;storytelling&quot; suits narration; &quot;natural&quot; suits dialogue. You can also type
+                  inline cues in the text: [cười] [thở dài] [hắng giọng].
+                </p>
               </div>
               <button className="button secondary" type="button" onClick={addSegment}>
                 Add segment
@@ -497,6 +656,7 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
                   <th>Order</th>
                   <th>Speaker</th>
                   <th>Text</th>
+                  <th>Emotion</th>
                   <th>Status</th>
                   <th />
                 </tr>
@@ -516,10 +676,23 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
                       <textarea className="textarea" value={segment.text} onChange={(event) => updateSegment(index, { text: event.target.value })} />
                     </td>
                     <td>
+                      <select
+                        className="select"
+                        value={segment.emotion ?? 'natural'}
+                        onChange={(event) => updateSegment(index, { emotion: event.target.value as SegmentEmotion })}
+                      >
+                        <option value="natural">natural</option>
+                        <option value="storytelling">storytelling</option>
+                      </select>
+                    </td>
+                    <td>
                       <span className="badge">{segment.status}</span>
                     </td>
                     <td>
                       <div className="button-row">
+                        <button className="button secondary" type="button" title="Insert a new segment below this one" onClick={() => insertSegmentAfter(index)}>
+                          + Below
+                        </button>
                         <button className="button secondary" type="button" onClick={() => splitSegment(index)}>Split</button>
                         <button className="button secondary" type="button" onClick={() => mergeWithNext(index)}>Merge</button>
                         <button className="button danger" type="button" onClick={() => deleteSegment(index)}>
@@ -541,6 +714,11 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
                 Accept segments for TTS
               </button>
             </div>
+            {segments.length > 0 && !voicesReady ? (
+              <p className="label">
+                Disabled because some speakers have no voice yet. Assign a VieNue voice to every used speaker in the Characters tab, then save.
+              </p>
+            ) : null}
           </section>
         ) : null}
 
@@ -569,21 +747,120 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
                 <Check size={16} aria-hidden="true" />
                 Approve final audio
               </button>
+              <button
+                className="button secondary"
+                type="button"
+                disabled={!canGenerate || regenSelection.size === 0}
+                title="Regenerate every checked segment in one job"
+                onClick={() => {
+                  const ids = [...regenSelection].sort();
+                  setRegenSelection(new Set());
+                  void startJob('generate_verify_tts', ids);
+                }}
+              >
+                <RefreshCw size={16} aria-hidden="true" />
+                Regenerate selected ({regenSelection.size})
+              </button>
+            </div>
+            <div className="panel">
+              <h3>Story Player</h3>
+              {playableSegments.length === 0 ? (
+                <p className="label">No segment audio yet. Generate TTS first.</p>
+              ) : (
+                <>
+                  <div className="button-row">
+                    <button
+                      className="button"
+                      type="button"
+                      onClick={() => setPlayerIndex(0)}
+                      disabled={playerIndex !== null}
+                    >
+                      <ListMusic size={16} aria-hidden="true" />
+                      Play all ({playableSegments.length} segments)
+                    </button>
+                    <button
+                      className="button secondary"
+                      type="button"
+                      onClick={() => setPlayerIndex((current) => (current !== null && current > 0 ? current - 1 : current))}
+                      disabled={playerIndex === null || playerIndex === 0}
+                    >
+                      <SkipBack size={16} aria-hidden="true" />
+                      Previous
+                    </button>
+                    <button
+                      className="button secondary"
+                      type="button"
+                      onClick={() =>
+                        setPlayerIndex((current) =>
+                          current !== null && current < playableSegments.length - 1 ? current + 1 : current,
+                        )
+                      }
+                      disabled={playerIndex === null || playerIndex >= playableSegments.length - 1}
+                    >
+                      <SkipForward size={16} aria-hidden="true" />
+                      Next
+                    </button>
+                    <button
+                      className="button secondary"
+                      type="button"
+                      onClick={() => setPlayerIndex(null)}
+                      disabled={playerIndex === null}
+                    >
+                      <Square size={16} aria-hidden="true" />
+                      Stop
+                    </button>
+                  </div>
+                  {playingSegment ? (
+                    <>
+                      <p className="label">
+                        Playing {(playerIndex ?? 0) + 1}/{playableSegments.length} — segment {playingSegment.id} [
+                        {playingSegment.speakerId}]: {playingSegment.text.slice(0, 120)}
+                        {playingSegment.text.length > 120 ? '…' : ''}
+                      </p>
+                      <audio
+                        autoPlay
+                        controls
+                        key={playingSegment.id}
+                        onEnded={handleSegmentEnded}
+                        src={assetUrl(slug, playingSegment.audioPath)}
+                        style={{ width: '100%' }}
+                      />
+                    </>
+                  ) : (
+                    <p className="label">Press Play all to hear the story in order without concat.</p>
+                  )}
+                </>
+              )}
             </div>
             <table className="table">
               <thead>
                 <tr>
+                  <th />
                   <th>ID</th>
                   <th>Speaker</th>
                   <th>Verification</th>
                   <th>Transcript</th>
                   <th>Audio</th>
+                  <th />
                 </tr>
               </thead>
               <tbody>
                 {segments.map((segment) => (
                   <tr key={segment.id}>
-                    <td className="mono">{segment.id}</td>
+                    <td>
+                      {segment.status !== 'skipped' ? (
+                        <input
+                          type="checkbox"
+                          checked={regenSelection.has(segment.id)}
+                          onChange={() => toggleRegenSelection(segment.id)}
+                          aria-label={`Select segment ${segment.id} for regeneration`}
+                        />
+                      ) : null}
+                    </td>
+                    <td className="mono">
+                      {playingSegment?.id === segment.id ? '▶ ' : ''}
+                      {segment.id}
+                    </td>
                     <td>{segment.speakerId}</td>
                     <td>
                       <span className={segment.verification.status === 'passed' ? 'badge good' : segment.verification.status === 'failed' || segment.verification.status === 'max_attempts_reached' ? 'badge bad' : 'badge warn'}>
@@ -598,6 +875,31 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
                       ) : (
                         <span className="label">No audio</span>
                       )}
+                    </td>
+                    <td>
+                      {segment.status !== 'skipped' ? (
+                        <div className="button-row">
+                          <button
+                            className="button secondary"
+                            type="button"
+                            disabled={!playableSegments.some((candidate) => candidate.id === segment.id)}
+                            title="Play the story from this segment onward"
+                            onClick={() => playFromSegment(segment.id)}
+                          >
+                            <Play size={15} aria-hidden="true" />
+                          </button>
+                          <button
+                            className="button secondary"
+                            type="button"
+                            disabled={!canGenerate}
+                            title={canGenerate ? `Regenerate and verify segment ${segment.id} only` : 'Approve segments and assign voices first'}
+                            onClick={() => void startJob('generate_verify_tts', [segment.id])}
+                          >
+                            <RefreshCw size={15} aria-hidden="true" />
+                            Regenerate
+                          </button>
+                        </div>
+                      ) : null}
                     </td>
                   </tr>
                 ))}

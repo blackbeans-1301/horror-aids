@@ -33,7 +33,11 @@ function createJobId(): string {
   return `job_${stamp}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-async function assertCanStartJob(storyId: string, type: JobType): Promise<void> {
+async function assertCanStartJob(
+  storyId: string,
+  type: JobType,
+  segmentIds?: string[],
+): Promise<void> {
   const jobs = await readJobs();
   const active = jobs.jobs.find((job) => job.storyId === storyId && isRunning(job));
 
@@ -56,11 +60,23 @@ async function assertCanStartJob(storyId: string, type: JobType): Promise<void> 
       throw new Error('Segments must be approved before TTS');
     }
 
+    if (segmentIds?.length) {
+      const knownIds = new Set(segments.segments.map((segment) => segment.id));
+      const missing = segmentIds.filter((id) => !knownIds.has(id));
+      if (missing.length > 0) {
+        throw new Error(`Unknown segment ids: ${missing.join(', ')}`);
+      }
+    }
+
+    const targeted = segmentIds?.length ? new Set(segmentIds) : null;
     const characters = new Map(
       charactersFile.characters.map((character) => [character.id, character]),
     );
     for (const segment of segments.segments) {
       if (segment.status === 'skipped') {
+        continue;
+      }
+      if (targeted && !targeted.has(segment.id)) {
         continue;
       }
 
@@ -87,8 +103,13 @@ async function assertCanStartJob(storyId: string, type: JobType): Promise<void> 
   }
 }
 
-export async function startStoryJob(storyId: string, type: JobType): Promise<JobRecord> {
-  await assertCanStartJob(storyId, type);
+export async function startStoryJob(
+  storyId: string,
+  type: JobType,
+  options?: { segmentIds?: string[] },
+): Promise<JobRecord> {
+  const segmentIds = type === 'generate_verify_tts' ? options?.segmentIds : undefined;
+  await assertCanStartJob(storyId, type, segmentIds);
 
   const jobId = createJobId();
   const logPath = `logs/${jobId}.log`;
@@ -104,6 +125,9 @@ export async function startStoryJob(storyId: string, type: JobType): Promise<Job
     '--config',
     path.join(configRoot, 'app.json'),
   ];
+  if (segmentIds?.length) {
+    command.push('--segments', segmentIds.join(','));
+  }
   const now = new Date().toISOString();
 
   const job: JobRecord = {

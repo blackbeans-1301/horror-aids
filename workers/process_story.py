@@ -26,6 +26,8 @@ def build_segment(segment_id: int, speaker_id: str, text: str) -> dict[str, Any]
         "order": segment_id,
         "speakerId": speaker_id,
         "text": text.strip(),
+        # Narration reads best in VieNeu's storytelling mode; dialogue stays natural.
+        "emotion": "storytelling" if speaker_id == "narrator" else "natural",
         "audioPath": f"audio/segments/{padded}-{speaker_id}.wav",
         "whisperTranscriptPath": f"tmp/whisper/{padded}-{speaker_id}.txt",
         "status": "pending",
@@ -46,24 +48,45 @@ def main() -> int:
     if not story_text:
         raise ValueError("story text is empty")
 
+    existing = ctx.read_json(story["text"]["charactersPath"], {"characters": []})
+    existing_voices = {
+        character["id"]: character.get("voice", "")
+        for character in existing.get("characters", [])
+    }
+
     characters: dict[str, dict[str, str]] = {
         "narrator": {
             "id": "narrator",
             "name": "Narrator",
             "role": "narrator",
-            "voice": "",
+            "voice": existing_voices.get("narrator", ""),
         }
     }
     named_speaker_order: list[str] = []
     segments: list[dict[str, Any]] = []
     buffer: list[str] = []
 
+    # Narrator paragraphs shorter than this merge with the next one so tiny
+    # sound-effect lines ("Cộc... Cộc... Cộc...") don't become standalone
+    # segments that are hard to verify with Whisper.
+    min_narrator_chars = 60
+
     def flush_narrator() -> None:
         nonlocal buffer
-        text = "\n\n".join(part.strip() for part in buffer if part.strip()).strip()
-        if text:
-            segments.append(build_segment(len(segments) + 1, "narrator", text))
+        parts = [part.strip() for part in buffer if part.strip()]
         buffer = []
+        pending = ""
+        for part in parts:
+            pending = f"{pending}\n\n{part}".strip() if pending else part
+            if len(pending) >= min_narrator_chars:
+                segments.append(build_segment(len(segments) + 1, "narrator", pending))
+                pending = ""
+        if pending:
+            if segments and segments[-1]["speakerId"] == "narrator":
+                merged = f"{segments[-1]['text']}\n\n{pending}"
+                segments[-1] = build_segment(segments[-1]["order"], "narrator", merged)
+            else:
+                segments.append(build_segment(len(segments) + 1, "narrator", pending))
 
     blocks = [block.strip() for block in re.split(r"\n\s*\n", story_text) if block.strip()]
     for block in blocks:
@@ -82,7 +105,7 @@ def main() -> int:
                 "id": speaker_id,
                 "name": speaker_name,
                 "role": role_for_index(speaker_name, len(named_speaker_order) - 1),
-                "voice": "",
+                "voice": existing_voices.get(speaker_id, ""),
             }
         segments.append(build_segment(len(segments) + 1, speaker_id, speaker_text))
 

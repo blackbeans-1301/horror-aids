@@ -31,7 +31,14 @@ def make_fake_wav(path: Path, text: str, sample_rate: int) -> None:
             audio.writeframesraw(value.to_bytes(2, byteorder="little", signed=True))
 
 
-def call_vienue(ctx: Any, output_path: Path, text: str, voice: str, config: dict[str, Any]) -> None:
+def call_vienue(
+    ctx: Any,
+    output_path: Path,
+    text: str,
+    voice: str,
+    config: dict[str, Any],
+    emotion: str = "natural",
+) -> None:
     vienue = config.get("vienue", {})
     base_url = os.getenv("VIENUE_TTS_BASE_URL") or str(vienue.get("baseUrl") or "")
     fake_mode = env_bool("HORROR_AIDS_FAKE_TTS", default=not bool(base_url))
@@ -51,6 +58,7 @@ def call_vienue(ctx: Any, output_path: Path, text: str, voice: str, config: dict
             "voice": voice,
             "input": text,
             "response_format": "wav",
+            "emotion": emotion,
         }
     ).encode("utf-8")
     headers = {"content-type": "application/json"}
@@ -106,6 +114,61 @@ def run_whisper(ctx: Any, audio_path: Path, transcript_path: Path, text: str, co
     return transcript
 
 
+def run_whisper_batch(
+    ctx: Any,
+    items: list[tuple[Path, Path, str]],
+    config: dict[str, Any],
+) -> dict[str, str]:
+    """Transcribe many WAVs in a single Whisper invocation.
+
+    Loading the Whisper model dominates per-segment runtime (~20s vs ~1s of
+    actual transcription), so one process for N files instead of N processes
+    is the main pipeline speed-up. Returns {audio stem: transcript}.
+    """
+    whisper_config = config.get("whisper", {})
+    command = os.getenv("WHISPER_COMMAND") or shutil.which("whisper")
+    fake_mode = env_bool("HORROR_AIDS_FAKE_WHISPER", default=command is None)
+    results: dict[str, str] = {}
+
+    if fake_mode:
+        for audio_path, transcript_path, text in items:
+            atomic_write(transcript_path, text)
+            results[audio_path.stem] = text
+        ctx.log(f"fake Whisper transcripts for {len(items)} segments")
+        return results
+
+    output_dir = items[0][1].parent
+    output_dir.mkdir(parents=True, exist_ok=True)
+    model = os.getenv("WHISPER_MODEL") or str(whisper_config.get("model") or "base")
+    language = os.getenv("WHISPER_LANGUAGE") or str(whisper_config.get("language") or "vi")
+    completed = subprocess.run(
+        [
+            command,
+            *[str(audio_path) for audio_path, _, _ in items],
+            "--language",
+            language,
+            "--model",
+            model,
+            "--output_format",
+            "txt",
+            "--output_dir",
+            str(output_dir),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(completed.stderr.strip() or "Whisper batch command failed")
+
+    for audio_path, transcript_path, _ in items:
+        generated = output_dir / f"{audio_path.stem}.txt"
+        transcript = generated.read_text(encoding="utf-8").strip() if generated.exists() else ""
+        atomic_write(transcript_path, transcript)
+        results[audio_path.stem] = transcript
+    return results
+
+
 def passes_verification(transcript: str, source_text: str, min_ratio: float) -> tuple[bool, str | None]:
     normalized_transcript = "".join(transcript.split())
     normalized_source = "".join(source_text.split())
@@ -132,14 +195,36 @@ def main() -> int:
     max_attempts = int(os.getenv("AUDIO_VERIFY_MAX_ATTEMPTS") or whisper_config.get("maxAttempts") or 3)
     min_ratio = float(os.getenv("AUDIO_VERIFY_MIN_TEXT_RATIO") or whisper_config.get("minTextRatio") or 0.6)
 
+    target_ids = ctx.segment_filter
+    if target_ids:
+        known_ids = {segment["id"] for segment in segments_file["segments"]}
+        missing = target_ids - known_ids
+        if missing:
+            raise ValueError(f"unknown segment ids: {', '.join(sorted(missing))}")
+        ctx.log(f"targeted run for segments: {', '.join(sorted(target_ids))}")
+
     updated_segments: list[dict[str, Any]] = []
-    unresolved = 0
+    pending: list[tuple[dict[str, Any], dict[str, Any]]] = []
     generated_count = 0
 
     for segment in segments_file["segments"]:
         if segment.get("status") == "skipped":
             updated_segments.append(segment)
             continue
+
+        if target_ids and segment["id"] not in target_ids:
+            updated_segments.append(segment)
+            continue
+
+        if target_ids:
+            # A targeted regenerate starts fresh instead of resuming a counter
+            # that may already sit at max_attempts.
+            segment["verification"] = {
+                "status": "pending",
+                "attempts": 0,
+                "lastError": None,
+                "transcriptPreview": None,
+            }
 
         speaker_id = segment["speakerId"]
         character = characters.get(speaker_id)
@@ -151,44 +236,118 @@ def main() -> int:
                 "lastError": f"Missing voice for speaker {speaker_id}",
             }
             updated_segments.append(segment)
-            unresolved += 1
             continue
 
+        updated_segments.append(segment)
+        pending.append((segment, character))
+
+    def record_failure(segment: dict[str, Any], attempts: int, error: str) -> None:
+        segment["verification"] = {
+            "status": "failed",
+            "attempts": attempts,
+            "lastError": error,
+            "transcriptPreview": None,
+        }
+
+    def record_result(segment: dict[str, Any], attempts: int, transcript: str) -> bool:
+        passed, last_error = passes_verification(transcript, segment["text"], min_ratio)
+        segment["verification"] = {
+            "status": "passed" if passed else "failed",
+            "attempts": attempts,
+            "lastError": last_error,
+            "transcriptPreview": transcript[:240],
+        }
+        if passed:
+            segment["status"] = "complete"
+            ctx.log(f"segment {segment['id']} verified")
+        else:
+            ctx.log(f"segment {segment['id']} verification failed: {last_error}")
+        return passed
+
+    # Pass 1: generate every pending segment, then verify them all with a
+    # single Whisper invocation (one model load instead of one per segment).
+    retry_queue: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    batch_items: list[tuple[Path, Path, str]] = []
+    batch_segments: list[tuple[dict[str, Any], dict[str, Any]]] = []
+
+    for segment, character in pending:
+        attempts = int(segment.get("verification", {}).get("attempts") or 0)
+        if attempts >= max_attempts:
+            retry_queue.append((segment, character))
+            continue
+        try:
+            segment["status"] = "generating"
+            ctx.log(f"segment {segment['id']} attempt {attempts + 1}: generating voice {character['voice']}")
+            call_vienue(
+                ctx,
+                ctx.resolve(segment["audioPath"]),
+                segment["text"],
+                character["voice"],
+                config,
+                emotion=segment.get("emotion") or "natural",
+            )
+            generated_count += 1
+            segment["verification"] = {**segment.get("verification", {}), "attempts": attempts + 1}
+            batch_items.append(
+                (
+                    ctx.resolve(segment["audioPath"]),
+                    ctx.resolve(segment["whisperTranscriptPath"]),
+                    segment["text"],
+                )
+            )
+            batch_segments.append((segment, character))
+        except (urllib.error.URLError, RuntimeError, OSError) as exc:
+            record_failure(segment, attempts + 1, str(exc))
+            ctx.log(f"segment {segment['id']} failed attempt {attempts + 1}: {exc}")
+            retry_queue.append((segment, character))
+
+    if batch_items:
+        ctx.log(f"batch transcribing {len(batch_items)} segments with Whisper")
+        try:
+            transcripts = run_whisper_batch(ctx, batch_items, config)
+        except (RuntimeError, OSError) as exc:
+            ctx.log(f"batch Whisper failed, falling back to per-segment retries: {exc}")
+            transcripts = {}
+        for segment, character in batch_segments:
+            attempts = int(segment["verification"]["attempts"])
+            stem = ctx.resolve(segment["audioPath"]).stem
+            transcript = transcripts.get(stem)
+            if transcript is None:
+                record_failure(segment, attempts, "Whisper batch produced no transcript")
+                retry_queue.append((segment, character))
+            elif not record_result(segment, attempts, transcript):
+                retry_queue.append((segment, character))
+
+    # Pass 2: per-segment retries for everything that failed the batch round.
+    for segment, character in retry_queue:
         audio_path = ctx.resolve(segment["audioPath"])
         transcript_path = ctx.resolve(segment["whisperTranscriptPath"])
-        verification = segment.get("verification", {})
         passed = False
-        last_error: str | None = None
-        attempts = int(verification.get("attempts") or 0)
+        last_error = segment.get("verification", {}).get("lastError")
+        attempts = int(segment.get("verification", {}).get("attempts") or 0)
 
         for attempt in range(attempts + 1, max_attempts + 1):
             attempts = attempt
             try:
                 segment["status"] = "generating"
                 ctx.log(f"segment {segment['id']} attempt {attempt}: generating voice {character['voice']}")
-                call_vienue(ctx, audio_path, segment["text"], character["voice"], config)
+                call_vienue(
+                    ctx,
+                    audio_path,
+                    segment["text"],
+                    character["voice"],
+                    config,
+                    emotion=segment.get("emotion") or "natural",
+                )
                 generated_count += 1
                 transcript = run_whisper(ctx, audio_path, transcript_path, segment["text"], config)
-                passed, last_error = passes_verification(transcript, segment["text"], min_ratio)
-                segment["verification"] = {
-                    "status": "passed" if passed else "failed",
-                    "attempts": attempts,
-                    "lastError": last_error,
-                    "transcriptPreview": transcript[:240],
-                }
-                if passed:
-                    segment["status"] = "complete"
-                    ctx.log(f"segment {segment['id']} verified")
+                if record_result(segment, attempts, transcript):
+                    passed = True
                     break
-                ctx.log(f"segment {segment['id']} verification failed: {last_error}")
+                last_error = segment["verification"]["lastError"]
             except (urllib.error.URLError, RuntimeError, OSError) as exc:
                 last_error = str(exc)
-                segment["verification"] = {
-                    "status": "failed",
-                    "attempts": attempts,
-                    "lastError": last_error,
-                    "transcriptPreview": None,
-                }
+                record_failure(segment, attempts, last_error)
                 ctx.log(f"segment {segment['id']} failed attempt {attempt}: {last_error}")
             time.sleep(0.05)
 
@@ -200,23 +359,41 @@ def main() -> int:
                 "attempts": attempts,
                 "lastError": last_error or "Max attempts reached",
             }
-            unresolved += 1
 
-        updated_segments.append(segment)
+    # Story status reflects ALL segments, not only the ones processed in this
+    # run — a targeted regenerate must not mark the story verified while other
+    # segments are still pending or failed.
+    unresolved = sum(
+        1
+        for segment in updated_segments
+        if segment.get("status") != "skipped"
+        and segment.get("verification", {}).get("status") != "passed"
+    )
+    # Job success is judged only on the segments this run actually processed.
+    run_unresolved = sum(
+        1
+        for segment in updated_segments
+        if segment.get("status") != "skipped"
+        and (not target_ids or segment["id"] in target_ids)
+        and segment.get("verification", {}).get("status") != "passed"
+    )
 
     segments_file["segments"] = updated_segments
     ctx.write_json(story["text"]["segmentsPath"], segments_file)
     if unresolved == 0:
         story["status"] = "tts_verified"
         story["audio"]["status"] = "verified"
-    else:
+    elif run_unresolved > 0:
         story["status"] = "audio_validation"
         story["audio"]["status"] = "failed"
     ctx.write_story(story)
-    result_status = "complete" if unresolved == 0 else "needs_review"
-    ctx.result(result_status, generated=generated_count, unresolved=unresolved)
-    ctx.log(f"generate_verify_tts finished: generated={generated_count}, unresolved={unresolved}")
-    return 0 if unresolved == 0 else 1
+    result_status = "complete" if run_unresolved == 0 else "needs_review"
+    ctx.result(result_status, generated=generated_count, unresolved=unresolved, runUnresolved=run_unresolved)
+    ctx.log(
+        f"generate_verify_tts finished: generated={generated_count}, "
+        f"run_unresolved={run_unresolved}, story_unresolved={unresolved}"
+    )
+    return 0 if run_unresolved == 0 else 1
 
 
 if __name__ == "__main__":

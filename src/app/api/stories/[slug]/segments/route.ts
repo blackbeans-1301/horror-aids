@@ -1,7 +1,12 @@
 import { NextResponse } from 'next/server';
 
 import { patchStory, readSegments, writeSegments } from '@/lib/json-store';
-import type { SegmentRecord, SegmentStatus, VerificationStatus } from '@/types/story';
+import type {
+  SegmentEmotion,
+  SegmentRecord,
+  SegmentStatus,
+  VerificationStatus,
+} from '@/types/story';
 
 interface StoryRouteContext {
   params: Promise<{ slug: string }>;
@@ -69,11 +74,15 @@ function normalizeSegments(input: unknown): SegmentRecord[] {
         return null;
       }
 
+      const emotion: SegmentEmotion =
+        record.emotion === 'storytelling' ? 'storytelling' : 'natural';
+
       return {
         id,
         order,
         speakerId,
         text,
+        emotion,
         audioPath:
           typeof record.audioPath === 'string' && record.audioPath.trim()
             ? record.audioPath

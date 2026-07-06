@@ -28,7 +28,17 @@ async function requestJson<T>(
   return (await response.json()) as T;
 }
 
+export interface VoiceOption {
+  id: string;
+  description: string;
+  kind: 'preset' | 'clone';
+}
+
 export const storiesApi = {
+  async voices(): Promise<{ voices: VoiceOption[]; error?: string }> {
+    return requestJson<{ voices: VoiceOption[]; error?: string }>('/api/voices');
+  },
+
   async list(): Promise<StoryIndexEntry[]> {
     const data = await requestJson<{ stories: StoryIndexEntry[] }>('/api/stories');
     return data.stories;
@@ -82,10 +92,10 @@ export const storiesApi = {
     await requestJson(`/api/stories/${slug}/approve-final-audio`, { method: 'POST' });
   },
 
-  async startJob(slug: string, type: JobType): Promise<JobRecord> {
+  async startJob(slug: string, type: JobType, segmentIds?: string[]): Promise<JobRecord> {
     const data = await requestJson<{ job: JobRecord }>(`/api/stories/${slug}/jobs`, {
       method: 'POST',
-      body: JSON.stringify({ type }),
+      body: JSON.stringify({ type, segmentIds }),
     });
     return data.job;
   },

@@ -24,16 +24,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--story", required=True)
     parser.add_argument("--job-id", required=True)
     parser.add_argument("--config", default="config/app.json")
+    parser.add_argument("--segments", default="", help="comma-separated segment ids to limit the run to")
     return parser.parse_args()
 
 
 class WorkerContext:
-    def __init__(self, story: str, job_id: str, config: str) -> None:
+    def __init__(self, story: str, job_id: str, config: str, segments: str = "") -> None:
         self.project_root = Path.cwd()
         self.story_dir = (self.project_root / story).resolve()
         self.story_id = self.story_dir.name
         self.job_id = job_id
         self.config_path = (self.project_root / config).resolve()
+        # None = process every segment; a set limits the run to those segment ids.
+        self.segment_filter = {part.strip() for part in segments.split(",") if part.strip()} or None
         self.log_path = self.story_dir / "logs" / f"{job_id}.log"
         self.result_path = self.story_dir / "tmp" / f"{job_id}.result.json"
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -122,7 +125,7 @@ def atomic_write(path: Path, content: str | bytes) -> None:
 
 def load_context() -> WorkerContext:
     args = parse_args()
-    return WorkerContext(args.story, args.job_id, args.config)
+    return WorkerContext(args.story, args.job_id, args.config, args.segments)
 
 
 def env_bool(name: str, default: bool = False) -> bool:
