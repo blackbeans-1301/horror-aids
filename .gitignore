@@ -53,3 +53,4 @@ next-env.d.ts
 # drizzle introspect output (not part of the app)
 drizzle/relations.ts
 drizzle/schema.ts
+**/__pycache__/
