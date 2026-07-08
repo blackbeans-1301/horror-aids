@@ -161,6 +161,17 @@ export interface JobsFile {
   jobs: JobRecord[];
 }
 
+export interface VoiceRecord {
+  id: string;
+  name: string;
+  wavPath: string;
+  createdAt: string;
+}
+
+export interface VoicesFile {
+  voices: VoiceRecord[];
+}
+
 export interface StoryDetail {
   story: StoryRecord;
   storyText: string;

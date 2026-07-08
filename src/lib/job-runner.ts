@@ -3,7 +3,7 @@ import 'server-only';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 
-import { configRoot, resolveStoryPath, workersRoot } from '@/lib/paths';
+import { configRoot, pythonExecutable, resolveStoryPath, workersRoot } from '@/lib/paths';
 import {
   isRunning,
   jobStatusFromExitCode,
@@ -116,7 +116,7 @@ export async function startStoryJob(
   const resultPath = `tmp/${jobId}.result.json`;
   const scriptPath = path.join(workersRoot, workerScripts[type]);
   const command = [
-    'python3',
+    pythonExecutable(),
     scriptPath,
     '--story',
     path.join('stories', storyId),

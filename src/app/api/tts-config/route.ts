@@ -1,65 +1,83 @@
+import path from 'node:path';
+
 import { NextResponse } from 'next/server';
 
-function ttsBaseUrl(): string | null {
-  const baseUrl = process.env.VIENUE_TTS_BASE_URL?.trim();
-  return baseUrl ? baseUrl.replace(/\/$/, '') : null;
+import { readJsonFile, writeJsonFile } from '@/lib/json-store';
+import { configRoot } from '@/lib/paths';
+
+interface AppConfig {
+  omnivoice?: { model?: string; device?: string };
+  whisper?: { enabled?: boolean; [key: string]: unknown };
+  audio?: { sampleRate?: number; channels?: number };
+  [key: string]: unknown;
+}
+
+const configPath = path.join(configRoot, 'app.json');
+
+const MODELS = [{ id: 'k2-fsa/OmniVoice', label: 'OmniVoice' }];
+const DEVICES = [
+  { id: 'auto', label: 'Auto-detect' },
+  { id: 'cpu', label: 'CPU' },
+  { id: 'mps', label: 'Apple Silicon (MPS)' },
+  { id: 'cuda', label: 'NVIDIA GPU (CUDA)' },
+];
+
+function toResponseShape(config: AppConfig) {
+  const model = config.omnivoice?.model || 'k2-fsa/OmniVoice';
+  const device = config.omnivoice?.device || 'auto';
+  return {
+    model,
+    modelLabel: MODELS.find((entry) => entry.id === model)?.label ?? model,
+    modelRepo: model,
+    models: MODELS,
+    device,
+    devices: DEVICES,
+    sampleRate: config.audio?.sampleRate ?? 22050,
+    emotions: [] as string[],
+    inlineCues: [] as string[],
+    voicesDir: 'data/voices',
+    verificationEnabled: config.whisper?.enabled ?? true,
+    notes:
+      'Local OmniVoice model — voice cloning only, no live server. Model/device changes ' +
+      'apply the next time you preview a voice or run "Generate and verify audio" ' +
+      '(first real run downloads model weights from Hugging Face).',
+  };
 }
 
 export async function GET(): Promise<NextResponse> {
-  const baseUrl = ttsBaseUrl();
-
-  if (!baseUrl) {
-    return NextResponse.json({ error: 'VIENUE_TTS_BASE_URL is not configured' }, { status: 400 });
-  }
-
-  try {
-    const response = await fetch(`${baseUrl}/v1/config`, { cache: 'no-store' });
-    if (!response.ok) {
-      return NextResponse.json(
-        { error: `TTS server responded with ${response.status}` },
-        { status: response.status },
-      );
-    }
-    return NextResponse.json({ ...(await response.json()), baseUrl });
-  } catch {
-    return NextResponse.json(
-      { error: 'Could not reach the VieNue TTS server. Is it running?' },
-      { status: 502 },
-    );
-  }
+  const config = await readJsonFile<AppConfig>(configPath, {});
+  return NextResponse.json(toResponseShape(config));
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
-  const baseUrl = ttsBaseUrl();
-  if (!baseUrl) {
-    return NextResponse.json({ error: 'VIENUE_TTS_BASE_URL is not configured' }, { status: 400 });
-  }
-
-  const body = (await request.json()) as { device?: unknown; model?: unknown };
+  const body = (await request.json()) as {
+    device?: unknown;
+    model?: unknown;
+    verificationEnabled?: unknown;
+  };
   const device = typeof body.device === 'string' ? body.device : undefined;
   const model = typeof body.model === 'string' ? body.model : undefined;
-  if (!device && !model) {
-    return NextResponse.json({ error: 'model or device is required' }, { status: 400 });
-  }
-
-  try {
-    const response = await fetch(`${baseUrl}/v1/config`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ model, device }),
-    });
-    const data = (await response.json()) as { detail?: string };
-    if (!response.ok) {
-      return NextResponse.json(
-        { error: data.detail ?? `TTS server responded with ${response.status}` },
-        { status: response.status },
-      );
-    }
-    return NextResponse.json({ ...data, baseUrl });
-  } catch {
+  const verificationEnabled =
+    typeof body.verificationEnabled === 'boolean' ? body.verificationEnabled : undefined;
+  if (!device && !model && verificationEnabled === undefined) {
     return NextResponse.json(
-      { error: 'Could not reach the VieNue TTS server. Is it running?' },
-      { status: 502 },
+      { error: 'model, device, or verificationEnabled is required' },
+      { status: 400 },
     );
   }
+
+  const config = await readJsonFile<AppConfig>(configPath, {});
+  const nextConfig: AppConfig = {
+    ...config,
+    omnivoice: {
+      model: model ?? config.omnivoice?.model ?? 'k2-fsa/OmniVoice',
+      device: device ?? config.omnivoice?.device ?? 'auto',
+    },
+    whisper: {
+      ...config.whisper,
+      enabled: verificationEnabled ?? config.whisper?.enabled ?? true,
+    },
+  };
+  await writeJsonFile(configPath, nextConfig);
+  return NextResponse.json(toResponseShape(nextConfig));
 }

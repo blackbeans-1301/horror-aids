@@ -561,8 +561,8 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
               <div>
                 <h2>Characters And Voices</h2>
                 <p>
-                  Every speaker used by segments needs a VieNue voice. Cloned voices (🎤) come from WAV
-                  files in the TTS server&apos;s voices/ folder — drop a 3-5s reference clip there to add one.
+                  Every speaker used by segments needs an OmniVoice voice. Add a cloned voice (🎤) from
+                  the Settings page by uploading a 3-5s reference clip, then assign it here.
                 </p>
                 {voicesError ? <p className="label">{voicesError}</p> : null}
               </div>
@@ -576,7 +576,7 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
                   <th>ID</th>
                   <th>Name</th>
                   <th>Role</th>
-                  <th>VieNue voice</th>
+                  <th>OmniVoice voice</th>
                   <th />
                 </tr>
               </thead>
@@ -616,7 +616,7 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
                           ) : null}
                         </select>
                       ) : (
-                        <input className="input mono" value={character.voice} onChange={(event) => updateCharacter(index, { voice: event.target.value })} placeholder="vienue_voice_id" />
+                        <input className="input mono" value={character.voice} onChange={(event) => updateCharacter(index, { voice: event.target.value })} placeholder="omnivoice_voice_id" />
                       )}
                     </td>
                     <td>
@@ -716,7 +716,7 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
             </div>
             {segments.length > 0 && !voicesReady ? (
               <p className="label">
-                Disabled because some speakers have no voice yet. Assign a VieNue voice to every used speaker in the Characters tab, then save.
+                Disabled because some speakers have no voice yet. Assign an OmniVoice voice to every used speaker in the Characters tab, then save.
               </p>
             ) : null}
           </section>

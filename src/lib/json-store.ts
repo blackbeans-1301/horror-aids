@@ -23,10 +23,14 @@ import type {
   StoryIndex,
   StoryIndexEntry,
   StoryRecord,
+  VoiceRecord,
+  VoicesFile,
 } from '@/types/story';
 
 const indexPath = path.join(dataRoot, 'index.json');
 const jobsPath = path.join(dataRoot, 'jobs.json');
+const voicesPath = path.join(dataRoot, 'voices.json');
+const voicesDir = path.join(dataRoot, 'voices');
 
 async function pathExists(filePath: string): Promise<boolean> {
   try {
@@ -41,7 +45,7 @@ async function ensureDir(dirPath: string): Promise<void> {
   await fs.mkdir(dirPath, { recursive: true });
 }
 
-async function readJsonFile<T>(filePath: string, fallback: T): Promise<T> {
+export async function readJsonFile<T>(filePath: string, fallback: T): Promise<T> {
   try {
     const raw = await fs.readFile(filePath, 'utf8');
     return JSON.parse(raw) as T;
@@ -54,10 +58,10 @@ async function readJsonFile<T>(filePath: string, fallback: T): Promise<T> {
   }
 }
 
-async function atomicWrite(filePath: string, content: string): Promise<void> {
+async function atomicWrite(filePath: string, content: string | Buffer): Promise<void> {
   await ensureDir(path.dirname(filePath));
   const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-  await fs.writeFile(tmpPath, content, 'utf8');
+  await fs.writeFile(tmpPath, content);
   await fs.rename(tmpPath, filePath);
 }
 
@@ -91,6 +95,10 @@ export async function ensureDataFiles(): Promise<void> {
 
   if (!(await pathExists(jobsPath))) {
     await writeJsonFile<JobsFile>(jobsPath, { jobs: [] });
+  }
+
+  if (!(await pathExists(voicesPath))) {
+    await writeJsonFile<VoicesFile>(voicesPath, { voices: [] });
   }
 }
 
@@ -388,6 +396,54 @@ export function nextSegmentId(segments: SegmentRecord[]): string {
     return Number.isFinite(parsed) ? Math.max(max, parsed) : max;
   }, 0);
   return `${maxId + 1}`.padStart(4, '0');
+}
+
+export async function readVoices(): Promise<VoicesFile> {
+  await ensureDataFiles();
+  return readJsonFile<VoicesFile>(voicesPath, { voices: [] });
+}
+
+export async function addVoice(name: string, wav: Buffer): Promise<VoiceRecord> {
+  const voices = await readVoices();
+  const baseId = slugify(name);
+  let id = baseId;
+  let suffix = 2;
+  while (voices.voices.some((voice) => voice.id === id)) {
+    id = `${baseId}-${suffix}`;
+    suffix += 1;
+  }
+
+  const wavPath = path.join('data', 'voices', `${id}.wav`);
+  await atomicWrite(path.join(voicesDir, `${id}.wav`), wav);
+
+  const voice: VoiceRecord = {
+    id,
+    name: name.trim(),
+    wavPath,
+    createdAt: new Date().toISOString(),
+  };
+  await writeJsonFile<VoicesFile>(voicesPath, { voices: [...voices.voices, voice] });
+  return voice;
+}
+
+export async function deleteVoice(id: string): Promise<void> {
+  const voices = await readVoices();
+  const voice = voices.voices.find((entry) => entry.id === id);
+  if (!voice) {
+    return;
+  }
+
+  await writeJsonFile<VoicesFile>(voicesPath, {
+    voices: voices.voices.filter((entry) => entry.id !== id),
+  });
+
+  try {
+    await fs.unlink(path.join(voicesDir, `${id}.wav`));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      throw error;
+    }
+  }
 }
 
 export function isRunning(job: JobRecord): boolean {

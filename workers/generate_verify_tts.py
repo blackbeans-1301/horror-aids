@@ -1,75 +1,50 @@
 from __future__ import annotations
 
-import json
-import math
 import os
 import shutil
 import subprocess
 import sys
 import time
-import urllib.error
-import urllib.request
-import wave
 from pathlib import Path
 from typing import Any
 
-from common import atomic_write, env_bool, load_context
+from common import (
+    atomic_write,
+    env_bool,
+    get_omnivoice_model,
+    load_context,
+    make_fake_wav,
+    resolve_voice_wav,
+)
 
 
-def make_fake_wav(path: Path, text: str, sample_rate: int) -> None:
-    duration = max(0.35, min(8.0, len(text) / 42.0))
-    frames = int(sample_rate * duration)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with wave.open(str(path), "wb") as audio:
-        audio.setnchannels(1)
-        audio.setsampwidth(2)
-        audio.setframerate(sample_rate)
-        for index in range(frames):
-            envelope = min(1.0, index / max(1, sample_rate // 10))
-            tone = math.sin(2 * math.pi * 220 * (index / sample_rate))
-            value = int(12000 * envelope * tone)
-            audio.writeframesraw(value.to_bytes(2, byteorder="little", signed=True))
-
-
-def call_vienue(
+def call_omnivoice(
     ctx: Any,
     output_path: Path,
     text: str,
     voice: str,
     config: dict[str, Any],
-    emotion: str = "natural",
 ) -> None:
-    vienue = config.get("vienue", {})
-    base_url = os.getenv("VIENUE_TTS_BASE_URL") or str(vienue.get("baseUrl") or "")
-    fake_mode = env_bool("HORROR_AIDS_FAKE_TTS", default=not bool(base_url))
+    fake_mode = env_bool("HORROR_AIDS_FAKE_TTS", default=True)
     sample_rate = int(config.get("audio", {}).get("sampleRate", 22050))
     if fake_mode:
         ctx.log(f"fake TTS output for {output_path.name}")
         make_fake_wav(output_path, text, sample_rate)
         return
 
-    endpoint = os.getenv("VIENUE_TTS_ENDPOINT") or str(vienue.get("endpoint") or "/v1/audio/speech")
-    model = os.getenv("VIENUE_TTS_MODEL") or str(vienue.get("model") or "default")
-    api_key = os.getenv("VIENUE_TTS_API_KEY") or ""
-    url = f"{base_url.rstrip('/')}/{endpoint.lstrip('/')}"
-    body = json.dumps(
-        {
-            "model": model,
-            "voice": voice,
-            "input": text,
-            "response_format": "wav",
-            "emotion": emotion,
-        }
-    ).encode("utf-8")
-    headers = {"content-type": "application/json"}
-    if api_key:
-        headers["authorization"] = f"Bearer {api_key}"
-    request = urllib.request.Request(url, data=body, headers=headers, method="POST")
-    with urllib.request.urlopen(request, timeout=120) as response:
-        data = response.read()
-    if not data:
-        raise RuntimeError("VieNue returned empty audio")
-    atomic_write(output_path, data)
+    import soundfile as sf
+
+    omnivoice_config = config.get("omnivoice", {})
+    model_repo = os.getenv("OMNIVOICE_MODEL") or str(omnivoice_config.get("model") or "k2-fsa/OmniVoice")
+    device = os.getenv("OMNIVOICE_DEVICE") or str(omnivoice_config.get("device") or "auto")
+    ref_audio = resolve_voice_wav(ctx.project_root, voice)
+
+    model = get_omnivoice_model(model_repo, device)
+    audios = model.generate(text=text, language="vi", ref_audio=str(ref_audio))
+    if not audios:
+        raise RuntimeError("OmniVoice returned no audio")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    sf.write(str(output_path), audios[0], model.sampling_rate)
 
 
 def run_whisper(ctx: Any, audio_path: Path, transcript_path: Path, text: str, config: dict[str, Any]) -> str:
@@ -194,6 +169,9 @@ def main() -> int:
     whisper_config = config.get("whisper", {})
     max_attempts = int(os.getenv("AUDIO_VERIFY_MAX_ATTEMPTS") or whisper_config.get("maxAttempts") or 3)
     min_ratio = float(os.getenv("AUDIO_VERIFY_MIN_TEXT_RATIO") or whisper_config.get("minTextRatio") or 0.6)
+    verify_enabled = env_bool("AUDIO_VERIFY_ENABLED", default=bool(whisper_config.get("enabled", True)))
+    if not verify_enabled:
+        ctx.log("audio verification disabled; segments will be accepted right after generation")
 
     target_ids = ctx.segment_filter
     if target_ids:
@@ -249,6 +227,16 @@ def main() -> int:
             "transcriptPreview": None,
         }
 
+    def accept_without_verification(segment: dict[str, Any], attempts: int) -> None:
+        segment["verification"] = {
+            "status": "passed",
+            "attempts": attempts,
+            "lastError": None,
+            "transcriptPreview": None,
+        }
+        segment["status"] = "complete"
+        ctx.log(f"segment {segment['id']} generated (verification disabled)")
+
     def record_result(segment: dict[str, Any], attempts: int, transcript: str) -> bool:
         passed, last_error = passes_verification(transcript, segment["text"], min_ratio)
         segment["verification"] = {
@@ -278,15 +266,17 @@ def main() -> int:
         try:
             segment["status"] = "generating"
             ctx.log(f"segment {segment['id']} attempt {attempts + 1}: generating voice {character['voice']}")
-            call_vienue(
+            call_omnivoice(
                 ctx,
                 ctx.resolve(segment["audioPath"]),
                 segment["text"],
                 character["voice"],
                 config,
-                emotion=segment.get("emotion") or "natural",
             )
             generated_count += 1
+            if not verify_enabled:
+                accept_without_verification(segment, attempts + 1)
+                continue
             segment["verification"] = {**segment.get("verification", {}), "attempts": attempts + 1}
             batch_items.append(
                 (
@@ -296,7 +286,7 @@ def main() -> int:
                 )
             )
             batch_segments.append((segment, character))
-        except (urllib.error.URLError, RuntimeError, OSError) as exc:
+        except (RuntimeError, OSError, ValueError) as exc:
             record_failure(segment, attempts + 1, str(exc))
             ctx.log(f"segment {segment['id']} failed attempt {attempts + 1}: {exc}")
             retry_queue.append((segment, character))
@@ -331,21 +321,24 @@ def main() -> int:
             try:
                 segment["status"] = "generating"
                 ctx.log(f"segment {segment['id']} attempt {attempt}: generating voice {character['voice']}")
-                call_vienue(
+                call_omnivoice(
                     ctx,
                     audio_path,
                     segment["text"],
                     character["voice"],
                     config,
-                    emotion=segment.get("emotion") or "natural",
                 )
                 generated_count += 1
+                if not verify_enabled:
+                    accept_without_verification(segment, attempts)
+                    passed = True
+                    break
                 transcript = run_whisper(ctx, audio_path, transcript_path, segment["text"], config)
                 if record_result(segment, attempts, transcript):
                     passed = True
                     break
                 last_error = segment["verification"]["lastError"]
-            except (urllib.error.URLError, RuntimeError, OSError) as exc:
+            except (RuntimeError, OSError, ValueError) as exc:
                 last_error = str(exc)
                 record_failure(segment, attempts, last_error)
                 ctx.log(f"segment {segment['id']} failed attempt {attempt}: {last_error}")

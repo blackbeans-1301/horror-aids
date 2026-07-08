@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 
 export const projectRoot = process.cwd();
@@ -5,6 +6,13 @@ export const dataRoot = path.join(projectRoot, 'data');
 export const storiesRoot = path.join(projectRoot, 'stories');
 export const workersRoot = path.join(projectRoot, 'workers');
 export const configRoot = path.join(projectRoot, 'config');
+
+// The omnivoice package (and its heavy ML deps) only lives in the workers'
+// virtualenv, not on the system PATH — worker scripts must run under it.
+export function pythonExecutable(): string {
+  const venvPython = path.join(workersRoot, '.venv', 'bin', 'python3');
+  return fs.existsSync(venvPython) ? venvPython : 'python3';
+}
 
 const slugPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 

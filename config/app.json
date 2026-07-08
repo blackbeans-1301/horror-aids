@@ -1,10 +1,10 @@
 {
-  "vienue": {
-    "baseUrl": "",
-    "endpoint": "/v1/audio/speech",
-    "model": "default"
+  "omnivoice": {
+    "model": "k2-fsa/OmniVoice",
+    "device": "auto"
   },
   "whisper": {
+    "enabled": true,
     "model": "base",
     "language": "vi",
     "minTextRatio": 0.6,

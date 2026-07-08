@@ -3,9 +3,9 @@
 Local-first Vietnamese horror audio production studio.
 
 The MVP lets one creator write a story, process it into narrator/character
-segments, generate segment WAV files through VieNue TTS, verify each segment
-with Whisper, confirm verified output in the UI, then concatenate one final WAV
-with FFmpeg.
+segments, generate segment WAV files through OmniVoice TTS, verify each
+segment with Whisper, confirm verified output in the UI, then concatenate one
+final WAV with FFmpeg.
 
 ## Requirements
 
@@ -13,18 +13,21 @@ with FFmpeg.
 - Python 3.10+
 - FFmpeg for final WAV concat
 - Optional: local Whisper CLI
-- Optional: local VieNue TTS OpenAI-compatible host
+- Optional: local OmniVoice (`omnivoice` Python package, already installed in
+  `workers/.venv`) — voice cloning only, no server to run. GPU or Apple
+  Silicon (MPS) recommended; the first real generation/preview downloads
+  model weights from Hugging Face.
 
 The workers include explicit local fallback modes for development verification:
 
 - `HORROR_AIDS_FAKE_TTS=1`
 - `HORROR_AIDS_FAKE_WHISPER=1`
 
-Production use should point the app at VieNue:
+Production use should point the app at OmniVoice:
 
 ```bash
 cp .env.example .env.local
-# edit VIENUE_TTS_BASE_URL, VIENUE_TTS_MODEL, and voice IDs in the UI
+# edit OMNIVOICE_MODEL, OMNIVOICE_DEVICE, and set HORROR_AIDS_FAKE_TTS=0
 ```
 
 ## Run

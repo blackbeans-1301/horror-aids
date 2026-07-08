@@ -1,47 +1,85 @@
+import 'server-only';
+
+import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+
 import { NextResponse } from 'next/server';
+
+import { readJsonFile, readVoices } from '@/lib/json-store';
+import { configRoot, projectRoot, pythonExecutable, workersRoot } from '@/lib/paths';
 
 const SAMPLE_TEXT =
   'Đêm đó, trời mưa tầm tã. Tiếng gõ cửa vang lên từ căn nhà hoang cuối ngõ.';
 
-export async function GET(request: Request): Promise<NextResponse> {
-  const baseUrl = process.env.VIENUE_TTS_BASE_URL?.trim()?.replace(/\/$/, '');
-  if (!baseUrl) {
-    return NextResponse.json({ error: 'VIENUE_TTS_BASE_URL is not configured' }, { status: 400 });
-  }
+interface OmnivoiceAppConfig {
+  omnivoice?: { model?: string; device?: string };
+}
 
+function runPreview(args: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(pythonExecutable(), args, { cwd: projectRoot, env: process.env });
+    let stderr = '';
+    child.stderr?.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.on('error', (error) => reject(error));
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(new Error(stderr.trim() || `preview_voice exited with code ${code}`));
+      }
+    });
+  });
+}
+
+export async function GET(request: Request): Promise<NextResponse> {
   const url = new URL(request.url);
-  const voice = url.searchParams.get('voice');
-  const emotion = url.searchParams.get('emotion') ?? 'storytelling';
-  if (!voice) {
+  const voiceId = url.searchParams.get('voice');
+  if (!voiceId) {
     return NextResponse.json({ error: 'voice query param is required' }, { status: 400 });
   }
 
+  const { voices } = await readVoices();
+  const voice = voices.find((entry) => entry.id === voiceId);
+  if (!voice) {
+    return NextResponse.json({ error: `Unknown voice: ${voiceId}` }, { status: 404 });
+  }
+
+  const config = await readJsonFile<OmnivoiceAppConfig>(path.join(configRoot, 'app.json'), {});
+  const model = process.env.OMNIVOICE_MODEL || config.omnivoice?.model || 'k2-fsa/OmniVoice';
+  const device = process.env.OMNIVOICE_DEVICE || config.omnivoice?.device || 'auto';
+
+  const outputPath = path.join(os.tmpdir(), `horror-aids-preview-${randomUUID()}.wav`);
+  const scriptPath = path.join(workersRoot, 'preview_voice.py');
+
   try {
-    const response = await fetch(`${baseUrl}/v1/audio/speech`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        input: SAMPLE_TEXT,
-        voice,
-        emotion,
-        response_format: 'wav',
-      }),
-    });
-    if (!response.ok) {
-      const data = (await response.json().catch(() => ({}))) as { detail?: string };
-      return NextResponse.json(
-        { error: data.detail ?? `TTS server responded with ${response.status}` },
-        { status: response.status },
-      );
-    }
-    const audio = await response.arrayBuffer();
+    await runPreview([
+      scriptPath,
+      '--voice-wav',
+      path.join(projectRoot, voice.wavPath),
+      '--text',
+      SAMPLE_TEXT,
+      '--output',
+      outputPath,
+      '--model',
+      model,
+      '--device',
+      device,
+    ]);
+    const audio = await fs.readFile(outputPath);
     return new NextResponse(audio, {
       headers: { 'content-type': 'audio/wav', 'cache-control': 'no-store' },
     });
-  } catch {
+  } catch (error) {
     return NextResponse.json(
-      { error: 'Could not reach the VieNue TTS server. Is it running?' },
+      { error: error instanceof Error ? error.message : 'Voice preview failed' },
       { status: 502 },
     );
+  } finally {
+    await fs.unlink(outputPath).catch(() => undefined);
   }
 }

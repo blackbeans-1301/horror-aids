@@ -18,8 +18,8 @@ interface TtsConfig {
   emotions: string[];
   inlineCues: string[];
   voicesDir: string;
+  verificationEnabled: boolean;
   notes: string;
-  baseUrl: string;
   error?: string;
 }
 
@@ -31,8 +31,9 @@ export const SettingsClient: React.FC = () => {
   const [isBusy, setIsBusy] = useState<boolean>(false);
   const [voiceName, setVoiceName] = useState<string>('');
   const [previewVoiceId, setPreviewVoiceId] = useState<string>('');
-  const [selectedModel, setSelectedModel] = useState<string>('v3-turbo');
-  const [selectedDevice, setSelectedDevice] = useState<string>('cpu');
+  const [selectedModel, setSelectedModel] = useState<string>('k2-fsa/OmniVoice');
+  const [selectedDevice, setSelectedDevice] = useState<string>('auto');
+  const [selectedVerificationEnabled, setSelectedVerificationEnabled] = useState<boolean>(true);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const refresh = useCallback(async (): Promise<void> => {
@@ -53,6 +54,7 @@ export const SettingsClient: React.FC = () => {
         setConfig(data);
         setSelectedModel(data.model);
         setSelectedDevice(data.device);
+        setSelectedVerificationEnabled(data.verificationEnabled);
         setConfigError('');
       } else {
         setConfig(null);
@@ -68,40 +70,52 @@ export const SettingsClient: React.FC = () => {
     void refresh();
   }, [refresh]);
 
+  const hasPendingChanges =
+    config !== null &&
+    (selectedModel !== config.model ||
+      selectedDevice !== config.device ||
+      selectedVerificationEnabled !== config.verificationEnabled);
+
   const applyEngine = useCallback(async (): Promise<void> => {
-    const switchingModel = config !== null && selectedModel !== config.model;
+    if (!config) {
+      return;
+    }
+    const switchingModel = selectedModel !== config.model;
+    const body: { model?: string; device?: string; verificationEnabled?: boolean } = switchingModel
+      ? { model: selectedModel }
+      : { device: selectedDevice };
+    if (selectedVerificationEnabled !== config.verificationEnabled) {
+      body.verificationEnabled = selectedVerificationEnabled;
+    }
+
     setIsBusy(true);
-    setMessage(
-      switchingModel
-        ? `Switching to ${selectedModel} — first use downloads the model, this can take a few minutes...`
-        : `Switching to ${selectedDevice.toUpperCase()} and reloading the model — this can take up to a minute...`,
-    );
+    setMessage('Saving...');
     try {
       const response = await fetch('/api/tts-config', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(
-          switchingModel ? { model: selectedModel } : { device: selectedDevice },
-        ),
+        body: JSON.stringify(body),
       });
       const data = (await response.json()) as TtsConfig & { error?: string };
       if (!response.ok) {
-        throw new Error(data.error ?? 'Engine switch failed');
+        throw new Error(data.error ?? 'Save failed');
       }
       setConfig(data);
       setSelectedModel(data.model);
       setSelectedDevice(data.device);
+      setSelectedVerificationEnabled(data.verificationEnabled);
       setMessage(
-        `Now serving ${data.modelLabel} on ${data.device.toUpperCase()} at ${data.sampleRate / 1000} kHz. ` +
-          'Re-check character voices before generating.',
+        `Saved — ${data.modelLabel} on ${data.device.toUpperCase()} will be used for the next ` +
+          'preview or generation run (first real run downloads the model, which can take a while). ' +
+          `Audio verification is ${data.verificationEnabled ? 'ON' : 'OFF'}.`,
       );
       await refresh();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Engine switch failed');
+      setMessage(error instanceof Error ? error.message : 'Save failed');
     } finally {
       setIsBusy(false);
     }
-  }, [config, refresh, selectedDevice, selectedModel]);
+  }, [config, refresh, selectedDevice, selectedModel, selectedVerificationEnabled]);
 
   const uploadVoice = useCallback(async (): Promise<void> => {
     const file = fileInputRef.current?.files?.[0];
@@ -202,7 +216,6 @@ export const SettingsClient: React.FC = () => {
                 <div className="status-line">
                   <span className="badge good">{config.device}</span>
                   <span className="badge">{config.sampleRate / 1000} kHz</span>
-                  <span className="badge">{config.baseUrl}</span>
                 </div>
                 <p className="label">{config.notes}</p>
                 {config.emotions.length > 0 ? (
@@ -253,10 +266,41 @@ export const SettingsClient: React.FC = () => {
                   className="button"
                   type="button"
                   onClick={() => void applyEngine()}
-                  disabled={
-                    isBusy ||
-                    (selectedModel === config.model && selectedDevice === config.device)
-                  }
+                  disabled={isBusy || !hasPendingChanges}
+                >
+                  <RefreshCw size={16} aria-hidden="true" />
+                  Apply
+                </button>
+              </>
+            ) : (
+              <p className="label">{configError || 'Loading...'}</p>
+            )}
+          </div>
+
+          <div className="panel form">
+            <h2>Audio Verification</h2>
+            {config ? (
+              <>
+                <p className="label">
+                  After each segment is generated, Whisper transcribes it and checks it against the
+                  script — this is the slowest part of a generation run (a Whisper model load plus a
+                  transcription pass per batch). Turn it off to accept generated audio immediately and
+                  review it by ear instead.
+                </p>
+                <label className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: '0.5rem' }}>
+                  <input
+                    type="checkbox"
+                    checked={selectedVerificationEnabled}
+                    onChange={(event) => setSelectedVerificationEnabled(event.target.checked)}
+                    disabled={isBusy}
+                  />
+                  <span className="label">Verify generated audio with Whisper</span>
+                </label>
+                <button
+                  className="button"
+                  type="button"
+                  onClick={() => void applyEngine()}
+                  disabled={isBusy || !hasPendingChanges}
                 >
                   <RefreshCw size={16} aria-hidden="true" />
                   Apply

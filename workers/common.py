@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import tempfile
+import wave
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -133,3 +135,61 @@ def env_bool(name: str, default: bool = False) -> bool:
     if value is None:
         return default
     return value.lower() in {"1", "true", "yes", "on"}
+
+
+def make_fake_wav(path: Path, text: str, sample_rate: int) -> None:
+    duration = max(0.35, min(8.0, len(text) / 42.0))
+    frames = int(sample_rate * duration)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(path), "wb") as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(sample_rate)
+        for index in range(frames):
+            envelope = min(1.0, index / max(1, sample_rate // 10))
+            tone = math.sin(2 * math.pi * 220 * (index / sample_rate))
+            value = int(12000 * envelope * tone)
+            audio.writeframesraw(value.to_bytes(2, byteorder="little", signed=True))
+
+
+def load_voice_registry(project_root: Path) -> dict[str, dict[str, Any]]:
+    """Read data/voices.json (managed by the Next.js app) into {id: entry}."""
+    registry_path = project_root / "data" / "voices.json"
+    if not registry_path.exists():
+        return {}
+    data = json.loads(registry_path.read_text(encoding="utf-8"))
+    return {entry["id"]: entry for entry in data.get("voices", [])}
+
+
+def resolve_voice_wav(project_root: Path, voice_id: str) -> Path:
+    registry = load_voice_registry(project_root)
+    entry = registry.get(voice_id)
+    if not entry:
+        raise ValueError(f"unknown voice id: {voice_id}")
+    wav_path = (project_root / entry["wavPath"]).resolve()
+    if not wav_path.exists():
+        raise ValueError(f"voice reference WAV missing for {voice_id}: {wav_path}")
+    return wav_path
+
+
+_MODEL_CACHE: dict[tuple[str, str], Any] = {}
+
+
+def get_omnivoice_model(model_repo: str, device: str | None = None) -> Any:
+    """Lazily load (and cache) an OmniVoice model for the given repo/device.
+
+    Loading is expensive (model weights + first-run download from Hugging
+    Face), so callers that generate many segments in one process should
+    request the model once and reuse it.
+    """
+    import torch
+    from omnivoice.models.omnivoice import OmniVoice
+    from omnivoice.utils.common import get_best_device
+
+    resolved_device = device if device and device != "auto" else get_best_device()
+    cache_key = (model_repo, resolved_device)
+    if cache_key not in _MODEL_CACHE:
+        _MODEL_CACHE[cache_key] = OmniVoice.from_pretrained(
+            model_repo, device_map=resolved_device, dtype=torch.float16
+        )
+    return _MODEL_CACHE[cache_key]
