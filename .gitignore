@@ -24,7 +24,7 @@
 /data/
 /stories/
 
-# local worker/runtime config
+# local worker/runtime config 
 /config/local*.json
 
 # misc
