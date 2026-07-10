@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Archive, FilePlus2, RefreshCw } from 'lucide-react';
 import React, { useCallback, useEffect, useState } from 'react';
+import { toast } from 'react-toastify';
 
 import { storiesApi } from '@/features/stories/api/storiesApi';
 import { AppShell } from '@/features/stories/components/AppShell';
@@ -16,6 +17,7 @@ export const DashboardClient: React.FC = () => {
   const [storyText, setStoryText] = useState<string>('');
   const [message, setMessage] = useState<string>('Loading stories...');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [showArchived, setShowArchived] = useState<boolean>(false);
 
   const loadStories = useCallback(async (): Promise<void> => {
     try {
@@ -31,27 +33,42 @@ export const DashboardClient: React.FC = () => {
     void loadStories();
   }, [loadStories]);
 
+  const handleToggleArchive = useCallback(
+    async (story: StoryIndexEntry): Promise<void> => {
+      try {
+        await storiesApi.setArchived(story.id, !story.archived);
+        toast.success(story.archived ? `Unarchived "${story.title}".` : `Archived "${story.title}".`);
+        await loadStories();
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Could not update story');
+      }
+    },
+    [loadStories],
+  );
+
   const handleCreate = useCallback(
     async (event: React.FormEvent<HTMLFormElement>): Promise<void> => {
       event.preventDefault();
       if (!title.trim()) {
-        setMessage('Title is required.');
+        toast.error('Title is required.');
         return;
       }
 
       setIsSubmitting(true);
-      setMessage('Creating story workspace...');
       try {
         const story = await storiesApi.create({ title, storyText });
+        toast.success(`Created "${story.title}".`);
         router.push(`/stories/${story.id}`);
       } catch (error) {
-        setMessage(error instanceof Error ? error.message : 'Could not create story');
+        toast.error(error instanceof Error ? error.message : 'Could not create story');
       } finally {
         setIsSubmitting(false);
       }
     },
     [router, storyText, title],
   );
+
+  const visibleStories = stories.filter((story) => story.archived === showArchived);
 
   return (
     <AppShell>
@@ -103,24 +120,57 @@ export const DashboardClient: React.FC = () => {
             <div className="page-header">
               <div>
                 <h2>Stories</h2>
-                <p>{stories.length} local workspace{stories.length === 1 ? '' : 's'}</p>
+                <p>
+                  {visibleStories.length} {showArchived ? 'archived' : 'active'} local workspace
+                  {visibleStories.length === 1 ? '' : 's'}
+                </p>
+              </div>
+              <div className="button-row">
+                <button
+                  className={showArchived ? 'button secondary' : 'button'}
+                  type="button"
+                  onClick={() => setShowArchived(false)}
+                >
+                  Active
+                </button>
+                <button
+                  className={showArchived ? 'button' : 'button secondary'}
+                  type="button"
+                  onClick={() => setShowArchived(true)}
+                >
+                  Archived
+                </button>
               </div>
             </div>
             <div className="story-list">
-              {stories.map((story) => (
-                <Link className="story-item" href={`/stories/${story.id}`} key={story.id}>
-                  <div className="status-line">
-                    <strong>{story.title}</strong>
-                    <span className="badge">{story.status}</span>
-                  </div>
-                  <span className="mono">{story.id}</span>
-                  <span className="label">Updated {new Date(story.updatedAt).toLocaleString()}</span>
-                </Link>
+              {visibleStories.map((story) => (
+                <div className="story-item" key={story.id}>
+                  <Link href={`/stories/${story.id}`}>
+                    <div className="status-line">
+                      <strong>{story.title}</strong>
+                      <span className="badge">{story.status}</span>
+                    </div>
+                    <span className="mono">{story.id}</span>
+                    <span className="label">Updated {new Date(story.updatedAt).toLocaleString()}</span>
+                  </Link>
+                  <button
+                    className="button secondary"
+                    type="button"
+                    onClick={() => void handleToggleArchive(story)}
+                  >
+                    <Archive size={15} aria-hidden="true" />
+                    {story.archived ? 'Unarchive' : 'Archive'}
+                  </button>
+                </div>
               ))}
-              {stories.length === 0 ? (
+              {visibleStories.length === 0 ? (
                 <div className="story-item">
                   <Archive size={18} aria-hidden="true" />
-                  <p>Story workspaces will appear here after creation.</p>
+                  <p>
+                    {showArchived
+                      ? 'No archived stories.'
+                      : 'Story workspaces will appear here after creation.'}
+                  </p>
                 </div>
               ) : null}
             </div>

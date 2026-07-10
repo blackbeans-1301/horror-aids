@@ -47,6 +47,10 @@ async function assertCanStartJob(
 
   const story = await readStory(storyId);
 
+  if (story.archived) {
+    throw new Error('Story is archived; unarchive it before starting a job');
+  }
+
   if (type === 'generate_verify_tts') {
     const [charactersFile, segments] = await Promise.all([
       readCharacters(storyId),

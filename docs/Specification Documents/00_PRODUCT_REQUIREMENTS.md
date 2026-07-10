@@ -4,7 +4,7 @@
 
 Local-first Vietnamese horror audio production studio for one creator.
 
-Goal: help the creator write a horror story, split it into narrator/character audio segments, generate local VieNue TTS audio, verify each generated audio segment with Whisper, and concatenate approved narration into one WAV file.
+Goal: help the creator write a horror story, split it into narrator/character audio segments, generate local OmniVoice TTS audio, optionally verify each generated audio segment with Whisper, and concatenate approved narration into one WAV file.
 
 Not goal: video rendering, image generation, subtitles, YouTube upload, or fully automated content farming.
 
@@ -24,8 +24,8 @@ Not goal: video rendering, image generation, subtitles, YouTube upload, or fully
 4. Segment story text by narrator and characters in reading order.
 5. Review/edit characters, voices, and segments.
 6. Click approve/accept segments to unlock TTS.
-7. Generate per-segment WAV files through local VieNue TTS.
-8. Auto-verify each segment with Whisper transcription.
+7. Generate per-segment WAV files through the local OmniVoice model.
+8. If Whisper verification is enabled, auto-verify each segment with Whisper transcription.
 9. If Whisper cannot transcribe a segment or verification fails, regenerate that exact segment and verify again.
 10. Repeat the regenerate/verify loop until every required segment passes or reaches the retry limit.
 11. Show verified segment output in the UI for user validation.
@@ -44,11 +44,12 @@ Not goal: video rendering, image generation, subtitles, YouTube upload, or fully
 - Story writing editor backed by `text/story.md`.
 - Character/narrator definition workflow.
 - Ordered segment review workflow with explicit accept button.
-- Per-character VieNue voice assignment.
-- Python workers for story processing, VieNue TTS generation, Whisper verification, segment regeneration, and FFmpeg concat.
+- Per-character voice assignment from a local voice-cloning registry (`data/voices.json`).
+- Python workers for story processing, OmniVoice TTS generation, optional Whisper verification, segment regeneration, and FFmpeg concat.
 - Final audio output as WAV.
 - Human approval before TTS and before final concat.
-- Auto verification loop before user concat confirmation.
+- Optional auto verification loop before user concat confirmation (Whisper on/off toggle in Settings, default off).
+- Archive a story to hide it from the active dashboard view without deleting it.
 
 ### Out Of Scope
 
@@ -72,10 +73,10 @@ Not goal: video rendering, image generation, subtitles, YouTube upload, or fully
 - System creates `stories/[slug]/` with required folders.
 - User can write and edit the story in `text/story.md`.
 - System can create editable `characters.json` and `segments.json`.
-- User can assign VieNue voices to narrator/characters.
+- User can assign cloned voices to narrator/characters from the voice registry.
 - User can approve ordered segments with an explicit UI button.
 - Python worker can generate one WAV per segment.
-- Python worker can verify segment audio by transcribing it with Whisper.
+- Python worker can verify segment audio by transcribing it with Whisper when verification is enabled.
 - Failed verification regenerates only the exact failed segment.
 - UI shows verification status for every segment.
 - User can validate verified output before concat.
@@ -99,7 +100,7 @@ Not goal: video rendering, image generation, subtitles, YouTube upload, or fully
 - Character voices must be intentionally assigned.
 - Segments must preserve reading order.
 - Audio should avoid clipping, harsh volume jumps, repeated lines, and missing lines.
-- Whisper verification must pass before a segment is eligible for concat.
+- When Whisper verification is enabled, a segment must pass it before becoming eligible for concat; when disabled, a segment is accepted as soon as it generates and should be spot-checked by ear instead.
 - Final concat requires user validation of verified segment output.
 - Final WAV review required before story is marked complete.
 
@@ -112,15 +113,16 @@ Not goal: video rendering, image generation, subtitles, YouTube upload, or fully
 - Failed jobs must not corrupt approved text or existing audio.
 - JSON writes must be atomic.
 - Worker commands must be visible and reproducible.
-- VieNue secrets must stay in local environment/config, not story files.
-- Whisper verification failures must be recorded per segment.
+- OmniVoice runs in-process locally; there are no TTS provider secrets to protect.
+- Whisper verification failures must be recorded per segment when verification is enabled.
 
 ## Risks
 
 - Character segmentation may misidentify speakers.
 - Voice assignment mistakes create confusing audio.
-- TTS provider errors may leave partial segment audio.
+- OmniVoice generation errors may leave partial segment audio.
 - Whisper can produce false negatives on stylized voices or noisy output.
+- Running with verification disabled means bad audio can only be caught by manual listening.
 - Regeneration loop can get stuck if provider repeatedly returns bad audio; use a retry limit and manual failure state.
 - FFmpeg concat can fail if segment formats differ.
 - Long stories can create many segment files.
@@ -129,5 +131,5 @@ Not goal: video rendering, image generation, subtitles, YouTube upload, or fully
 ## MVP Definition Of Done
 
 - One user-written story can move from draft text to reviewed final WAV.
-- Operator can inspect story text, characters, segments, per-segment audio, Whisper verification results, final audio, and logs in local folders.
-- No infrastructure required beyond Node, Python, FFmpeg, Whisper, and local VieNue TTS configuration.
+- Operator can inspect story text, characters, segments, per-segment audio, Whisper verification results (if enabled), final audio, and logs in local folders.
+- No infrastructure required beyond Node, Python, FFmpeg, optional Whisper, and the bundled OmniVoice model/venv.

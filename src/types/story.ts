@@ -65,6 +65,8 @@ export interface StoryIndexEntry {
   sourceType: SourceType;
   storyPath: string;
   updatedAt: string;
+  archived: boolean;
+  archivedAt: string | null;
 }
 
 export interface StoryIndex {
@@ -81,6 +83,8 @@ export interface StoryRecord {
   status: StoryStatus;
   createdAt: string;
   updatedAt: string;
+  archived: boolean;
+  archivedAt: string | null;
   text: {
     storyPath: string;
     charactersPath: string;

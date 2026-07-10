@@ -9,8 +9,8 @@ Browser
   -> Next.js localhost app
     -> local API routes/server actions
       -> JSON store + story folders
-      -> Python worker commands
-        -> story processor / VieNue TTS / Whisper verify / FFmpeg concat
+      -> Python worker commands (spawned via the workers/.venv interpreter)
+        -> story processor / OmniVoice TTS / Whisper verify (optional) / FFmpeg concat
 ```
 
 ## Components
@@ -44,13 +44,14 @@ Responsibilities:
 
 - Story index.
 - Job status.
-- App settings.
-- Worker registry.
+- Voice-cloning registry.
 
 Source of truth:
 
 - `data/index.json` for story list.
 - `data/jobs.json` for global active/recent jobs.
+- `data/voices.json` for the cloned-voice registry (reference clips live under `data/voices/*.wav`).
+- `config/app.json` for OmniVoice model/device and the Whisper verification toggle (not a `data/` file — see Configuration).
 - `stories/[slug]/story.json` for story state.
 - `stories/[slug]/text/characters.json` for speaker definitions.
 - `stories/[slug]/text/segments.json` for ordered TTS segments and verification state.
@@ -61,7 +62,7 @@ Responsibilities:
 
 - Own all files for one story.
 - Keep audio package portable.
-- Allow archive/move by folder.
+- Allow archiving without moving the folder (see Data Flow's Archive Story section).
 
 Pattern:
 
@@ -80,14 +81,28 @@ stories/[story-slug]/
   tmp/
 ```
 
+### Voice-Cloning Registry
+
+Responsibilities:
+
+- Store uploaded reference WAV clips (3-5s each) used to clone a voice for OmniVoice.
+- Expose voices to the Characters tab so a character can be assigned one by ID.
+- Support preview (synthesize a short sample) and delete from the Settings screen.
+
+Pattern:
+
+- `data/voices.json` — `{ voices: [{ id, name, wavPath, createdAt }] }`, managed via `src/lib/json-store.ts`'s `addVoice`/`deleteVoice`/`readVoices`.
+- `data/voices/[id].wav` — the reference clip itself; only the path is stored in JSON, never the audio bytes.
+- API surface: `GET/POST/DELETE /api/voices`, `GET /api/voice-preview` (spawns `workers/preview_voice.py`).
+
 ### Python Workers
 
 Responsibilities:
 
 - Long-running text processing and audio tasks.
 - File-based input/output.
-- VieNue TTS API calls.
-- Whisper transcription verification.
+- In-process OmniVoice model calls (no network TTS provider).
+- Whisper transcription verification, when enabled.
 - Exact failed-segment regeneration.
 - FFmpeg audio normalization/concat.
 - Append logs.
@@ -138,14 +153,14 @@ Workers should write:
 ### Generate And Verify TTS
 
 1. Segments must be approved.
-2. Each character used by a segment must have a VieNue voice.
+2. Each character used by a segment must reference a voice in `data/voices.json`.
 3. Next.js starts `generate_verify_tts.py`.
-4. Worker calls local VieNue OpenAI-compatible API per segment.
+4. Worker loads the OmniVoice model in-process (cached for the run) and generates each segment from its reference clip.
 5. Worker writes `audio/segments/[segment-id]-[speaker-id].wav`.
-6. Worker transcribes the segment WAV with Whisper.
+6. If Whisper verification is enabled (`whisper.enabled` in `config/app.json`), worker transcribes the segment WAV with Whisper; if disabled, the segment is accepted immediately after generation.
 7. If Whisper cannot transcribe or verification fails, worker regenerates the exact failed segment and repeats verification.
 8. Worker stops retrying a failed segment after configured max attempts and marks it `failed`.
-9. Story status becomes `tts_verified` only when every required segment passes.
+9. Story status becomes `tts_verified` once every required segment passes (or is accepted, if verification is disabled).
 
 ### User Validate Verified Segments
 
@@ -165,6 +180,14 @@ Workers should write:
 7. UI plays final WAV for review.
 8. User marks audio complete.
 
+### Archive Story
+
+1. User clicks archive from the dashboard.
+2. Next.js sets `archived: true` and `archivedAt` on `story.json` and its `data/index.json` entry.
+3. Story folder is left in place — nothing moves on disk.
+4. Dashboard hides archived stories from the default (Active) view; a filter toggle shows them.
+5. Starting a new job on an archived story is rejected; unarchiving clears the flag and re-enables jobs.
+
 ## Process Model
 
 MVP can spawn worker processes directly from Next.js server.
@@ -182,21 +205,19 @@ Future upgrade:
 
 ## Configuration
 
-Recommended files:
+Actual files:
 
 ```text
 config/app.json
-config/voices.json
+data/voices.json
 .env.local
 ```
 
-VieNue environment/config values:
+OmniVoice environment/config values (`.env.local` overrides `config/app.json`'s `omnivoice` block):
 
 ```text
-VIENUE_TTS_BASE_URL=http://localhost:PORT
-VIENUE_TTS_API_KEY=optional-local-key
-VIENUE_TTS_MODEL=model-name
-VIENUE_TTS_ENDPOINT=/v1/audio/speech
+OMNIVOICE_MODEL=k2-fsa/OmniVoice
+OMNIVOICE_DEVICE=auto
 ```
 
 Whisper environment/config values:
@@ -206,11 +227,14 @@ WHISPER_MODEL=base
 WHISPER_LANGUAGE=vi
 AUDIO_VERIFY_MAX_ATTEMPTS=3
 AUDIO_VERIFY_MIN_TEXT_RATIO=0.6
+AUDIO_VERIFY_ENABLED=0
 ```
+
+`config/app.json`'s `whisper.enabled` (default `false`) is the persisted toggle set from the Settings screen; `AUDIO_VERIFY_ENABLED` can override it per environment.
 
 Secrets:
 
-- API keys stay in `.env.local`.
+- OmniVoice runs as a local Python model with no API key — there is nothing to keep secret for TTS.
 - Never write secrets to `story.json`, logs, segment files, or metadata exports.
 
 ## Dependency Boundaries
@@ -226,8 +250,8 @@ Next.js owns:
 Python owns:
 
 - Story processing.
-- VieNue TTS calls.
-- Whisper transcription verification.
+- OmniVoice TTS generation (in-process model call).
+- Whisper transcription verification, when enabled.
 - Failed segment regeneration loop.
 - FFmpeg audio concat.
 - Heavy file processing.
@@ -245,12 +269,12 @@ Shared contract:
 
 - Worker exits non-zero -> job status `failed`.
 - Missing input file -> validation error before worker starts.
-- VieNue segment failure -> mark segment `failed`, keep other generated audio.
-- Whisper failure to transcribe -> regenerate exact segment until max attempts, then mark segment `verification_failed`.
-- Verification mismatch -> regenerate exact segment until max attempts, then mark segment `verification_failed`.
+- OmniVoice generation failure -> mark segment `failed`, keep other generated audio.
+- Whisper failure to transcribe (when enabled) -> regenerate exact segment until max attempts, then mark segment `verification_failed`.
+- Verification mismatch (when enabled) -> regenerate exact segment until max attempts, then mark segment `verification_failed`.
 - FFmpeg failure -> include command and stderr in log.
-- App restart -> read existing JSON, audio files, transcripts, and logs.
-- Partial TTS output -> keep files but do not mark story `tts_verified` unless all required segments pass.
+- App restart -> read existing JSON, audio files, transcripts, and logs. Note: a job left `running` when the app process was killed has no automatic recovery today — this is a known gap, not yet built.
+- Partial TTS output -> keep files but do not mark story `tts_verified` unless all required segments pass (or are accepted, if verification is disabled).
 
 ## Security
 

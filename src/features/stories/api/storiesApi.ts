@@ -59,6 +59,14 @@ export const storiesApi = {
     return requestJson<StoryDetail>(`/api/stories/${slug}`);
   },
 
+  async setArchived(slug: string, archived: boolean): Promise<StoryRecord> {
+    const data = await requestJson<{ story: StoryRecord }>(`/api/stories/${slug}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ archived }),
+    });
+    return data.story;
+  },
+
   async saveStoryText(slug: string, storyText: string): Promise<void> {
     await requestJson(`/api/stories/${slug}/story-text`, {
       method: 'PUT',

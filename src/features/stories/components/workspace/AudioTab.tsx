@@ -1,0 +1,204 @@
+import { AudioLines, Check, Play, RefreshCw } from 'lucide-react';
+import React from 'react';
+
+import { StoryPlayer } from '@/features/stories/components/workspace/StoryPlayer';
+import { assetUrl, segmentAudioPath } from '@/features/stories/utils/asset';
+import type { JobType, SegmentRecord } from '@/types/story';
+
+interface AudioTabProps {
+  slug: string;
+  segments: SegmentRecord[];
+  canGenerate: boolean;
+  canConfirmVerified: boolean;
+  canConcat: boolean;
+  finalAudioExists: boolean;
+  finalAudioPath: string;
+  regenSelection: Set<string>;
+  onToggleRegenSelection: (segmentId: string) => void;
+  onStartJob: (type: JobType, segmentIds?: string[]) => void;
+  onClearRegenSelection: () => void;
+  onConfirmVerifiedAudio: () => void;
+  onApproveFinalAudio: () => void;
+  playableSegments: SegmentRecord[];
+  playingSegment: SegmentRecord | null;
+  playerIndex: number | null;
+  setPlayerIndex: React.Dispatch<React.SetStateAction<number | null>>;
+  onSegmentEnded: () => void;
+  onPlayFromSegment: (segmentId: string) => void;
+}
+
+export const AudioTab: React.FC<AudioTabProps> = ({
+  slug,
+  segments,
+  canGenerate,
+  canConfirmVerified,
+  canConcat,
+  finalAudioExists,
+  finalAudioPath,
+  regenSelection,
+  onToggleRegenSelection,
+  onStartJob,
+  onClearRegenSelection,
+  onConfirmVerifiedAudio,
+  onApproveFinalAudio,
+  playableSegments,
+  playingSegment,
+  playerIndex,
+  setPlayerIndex,
+  onSegmentEnded,
+  onPlayFromSegment,
+}) => {
+  return (
+    <section className="panel form">
+      <div className="page-header">
+        <div>
+          <h2>Audio Verification</h2>
+          <p>Generate TTS, inspect Whisper transcripts, confirm verified output, then concat.</p>
+        </div>
+      </div>
+      <div className="button-row">
+        <button
+          className="button secondary"
+          type="button"
+          onClick={() => onStartJob('generate_verify_tts')}
+          disabled={!canGenerate}
+        >
+          <AudioLines size={16} aria-hidden="true" />
+          Generate + verify TTS
+        </button>
+        <button className="button secondary" type="button" onClick={onConfirmVerifiedAudio} disabled={!canConfirmVerified}>
+          <Check size={16} aria-hidden="true" />
+          Confirm verified output
+        </button>
+        <button
+          className="button secondary"
+          type="button"
+          onClick={() => onStartJob('concat_audio')}
+          disabled={!canConcat}
+        >
+          <Play size={16} aria-hidden="true" />
+          Concat final WAV
+        </button>
+        <button className="button" type="button" onClick={onApproveFinalAudio} disabled={!finalAudioExists}>
+          <Check size={16} aria-hidden="true" />
+          Approve final audio
+        </button>
+        <button
+          className="button secondary"
+          type="button"
+          disabled={!canGenerate || regenSelection.size === 0}
+          title="Regenerate every checked segment in one job"
+          onClick={() => {
+            const ids = [...regenSelection].sort();
+            onClearRegenSelection();
+            onStartJob('generate_verify_tts', ids);
+          }}
+        >
+          <RefreshCw size={16} aria-hidden="true" />
+          Regenerate selected ({regenSelection.size})
+        </button>
+      </div>
+
+      <StoryPlayer
+        slug={slug}
+        playableSegments={playableSegments}
+        playingSegment={playingSegment}
+        playerIndex={playerIndex}
+        setPlayerIndex={setPlayerIndex}
+        onSegmentEnded={onSegmentEnded}
+      />
+
+      <table className="table">
+        <thead>
+          <tr>
+            <th />
+            <th>ID</th>
+            <th>Speaker</th>
+            <th>Verification</th>
+            <th>Transcript</th>
+            <th>Audio</th>
+            <th />
+          </tr>
+        </thead>
+        <tbody>
+          {segments.map((segment) => (
+            <tr key={segment.id}>
+              <td>
+                {segment.status !== 'skipped' ? (
+                  <input
+                    type="checkbox"
+                    checked={regenSelection.has(segment.id)}
+                    onChange={() => onToggleRegenSelection(segment.id)}
+                    aria-label={`Select segment ${segment.id} for regeneration`}
+                  />
+                ) : null}
+              </td>
+              <td className="mono">
+                {playingSegment?.id === segment.id ? '▶ ' : ''}
+                {segment.id}
+              </td>
+              <td>{segment.speakerId}</td>
+              <td>
+                <span
+                  className={
+                    segment.verification.status === 'passed'
+                      ? 'badge good'
+                      : segment.verification.status === 'failed' || segment.verification.status === 'max_attempts_reached'
+                        ? 'badge bad'
+                        : 'badge warn'
+                  }
+                >
+                  {segment.verification.status}
+                </span>
+                <div className="label">attempts {segment.verification.attempts}</div>
+              </td>
+              <td>{segment.verification.transcriptPreview || segment.verification.lastError || 'No transcript yet'}</td>
+              <td>
+                {segment.status === 'complete' || segment.verification.status === 'passed' ? (
+                  <audio controls src={assetUrl(slug, segmentAudioPath(segment))} />
+                ) : (
+                  <span className="label">No audio</span>
+                )}
+              </td>
+              <td>
+                {segment.status !== 'skipped' ? (
+                  <div className="button-row">
+                    <button
+                      className="button secondary"
+                      type="button"
+                      disabled={!playableSegments.some((candidate) => candidate.id === segment.id)}
+                      title="Play the story from this segment onward"
+                      onClick={() => onPlayFromSegment(segment.id)}
+                    >
+                      <Play size={15} aria-hidden="true" />
+                    </button>
+                    <button
+                      className="button secondary"
+                      type="button"
+                      disabled={!canGenerate}
+                      title={canGenerate ? `Regenerate and verify segment ${segment.id} only` : 'Approve segments and assign voices first'}
+                      onClick={() => onStartJob('generate_verify_tts', [segment.id])}
+                    >
+                      <RefreshCw size={15} aria-hidden="true" />
+                      Regenerate
+                    </button>
+                  </div>
+                ) : null}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="panel">
+        <h3>Final WAV</h3>
+        {finalAudioExists ? (
+          <audio controls src={assetUrl(slug, finalAudioPath)} />
+        ) : (
+          <p>Final audio will appear after concat.</p>
+        )}
+      </div>
+    </section>
+  );
+};
+
+export default AudioTab;

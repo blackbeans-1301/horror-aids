@@ -1,0 +1,2 @@
+1. Smart concat audio: sometimes, audio 1 and 2 has no gap time so it makes the 2 sensense concat too imediatly run from 1 to 2 audio. Makes the feeling not so good for a horror story
+2. On setting page, play the preview audio voice by using the voice file ref instead of generate a new audio

@@ -44,7 +44,7 @@ Open `http://localhost:3000`.
 1. Create a story workspace.
 2. Write story text.
 3. Process story into characters and segments.
-4. Assign VieNue voice IDs.
+4. Assign cloned voices from the voice registry (add one in Settings first).
 5. Accept segments for TTS.
 6. Generate and verify audio.
 7. Confirm verified output.

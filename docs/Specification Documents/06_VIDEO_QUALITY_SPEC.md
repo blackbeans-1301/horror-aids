@@ -1,5 +1,7 @@
 # Audio Quality Specification
 
+> Filename note: this file is named `06_VIDEO_QUALITY_SPEC.md` for numbering continuity with the phase docs, but its content is entirely about audio (TTS/Whisper/FFmpeg) quality — video/image/subtitle work is explicitly out of MVP scope (see `00_PRODUCT_REQUIREMENTS.md`) and has no spec of its own yet.
+
 ## Goal
 
 Make verified narration audio good enough to become the foundation for future Vietnamese horror videos.
@@ -31,7 +33,7 @@ Quality over output volume.
 - Main characters should be clearly identified.
 - Side characters and villains should be separate when voice distinction matters.
 - Minor one-line speakers can share an `other` voice if needed.
-- Every used character must have a VieNue voice before TTS.
+- Every used character must have a voice assigned from the cloned-voice registry before TTS.
 
 ## Segment Rules
 
@@ -64,16 +66,17 @@ Minimum QC:
 - No long silent gaps unless intentional.
 - No volume spikes between segments.
 
-## VieNue TTS Requirements
+## OmniVoice TTS Requirements
 
-- Use local VieNue host through OpenAI-compatible API.
+- Run the OmniVoice model in-process from the workers' Python venv — no external host or API key.
 - Request WAV output.
-- Generate one WAV per segment.
+- Generate one WAV per segment from the assigned character's reference clip.
 - Keep segment files after final concat for debugging/regeneration.
-- Do not log API key.
-- Record model and voice IDs in logs or result JSON.
+- Record model repo, device, and voice ID in logs or result JSON.
 
 ## Whisper Verification Requirements
+
+Whisper verification is an on/off toggle in Settings (`config/app.json`'s `whisper.enabled`), **default off** because it was the slowest part of a generation run. Requirements below apply only when it's enabled — with it off, segments are accepted immediately after generation and should be spot-checked by ear.
 
 - Every generated segment WAV must be transcribed by Whisper before concat.
 - If Whisper cannot transcribe the audio, the segment is treated as bad audio.
@@ -91,7 +94,7 @@ Minimum QC:
 - Validate every required segment has verification status `passed`.
 - Normalize/resample if segment formats differ.
 - Write final output to `audio/final.wav`.
-- Do not overwrite previously approved final WAV unless regeneration is explicitly requested.
+- Intended behavior: do not overwrite a previously approved final WAV unless regeneration is explicitly requested. Known gap: `concat_audio.py` does not currently check for this — it overwrites `audio/final.wav` on every run.
 
 ## Quality Gates
 
@@ -118,8 +121,8 @@ Must pass:
 Must pass:
 
 - Every non-skipped segment has WAV output.
-- Every non-skipped segment has Whisper transcript.
-- Every non-skipped segment verification status is `passed`.
+- If verification is enabled: every non-skipped segment has a Whisper transcript and verification status `passed`.
+- If verification is disabled: every non-skipped segment reaches `status: complete` (accepted without transcription).
 - Failed segments are visible.
 - User can regenerate failed/bad segments.
 

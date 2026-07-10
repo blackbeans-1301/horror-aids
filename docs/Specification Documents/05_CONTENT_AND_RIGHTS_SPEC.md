@@ -1,5 +1,7 @@
 # Content And Rights Specification
 
+> **Implementation status:** this document is mostly aspirational. `rightsStatus`/`sourceType`/`sourceUrl` exist on `story.json` and are PATCH-able via the API, but no screen currently displays or edits them, and `metadata/permissions.md`/`metadata/source.md` are never created or read anywhere in the code — only `metadata/notes.md` is created at story creation. Treat the policies below as intent to design toward, not delivered behavior.
+
 ## Position
 
 Horror Aids MVP helps one creator produce Vietnamese horror narration audio from stories they write.

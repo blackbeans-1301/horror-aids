@@ -9,6 +9,7 @@ interface StoryRouteContext {
 interface PatchStoryPayload {
   title?: unknown;
   rightsStatus?: unknown;
+  archived?: unknown;
 }
 
 export async function GET(
@@ -37,6 +38,13 @@ export async function PATCH(
       body.rightsStatus === 'risk_acknowledged'
         ? body.rightsStatus
         : current.rightsStatus,
+    archived: typeof body.archived === 'boolean' ? body.archived : current.archived,
+    archivedAt:
+      typeof body.archived === 'boolean'
+        ? body.archived
+          ? new Date().toISOString()
+          : null
+        : current.archivedAt,
   }));
 
   return NextResponse.json({ story });

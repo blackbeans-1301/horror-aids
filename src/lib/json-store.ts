@@ -167,6 +167,8 @@ export async function createStory(input: {
     status: 'story_draft',
     createdAt: now,
     updatedAt: now,
+    archived: false,
+    archivedAt: null,
     text: {
       storyPath: 'text/story.md',
       charactersPath: 'text/characters.json',
@@ -209,6 +211,8 @@ export async function createStory(input: {
     sourceType: story.sourceType,
     storyPath: `stories/${story.id}/story.json`,
     updatedAt: story.updatedAt,
+    archived: story.archived,
+    archivedAt: story.archivedAt,
   };
   await writeStoryIndex({ stories: [entry, ...index.stories] });
 
@@ -216,10 +220,12 @@ export async function createStory(input: {
 }
 
 export async function readStory(slug: string): Promise<StoryRecord> {
-  return readJsonFile<StoryRecord>(
+  const story = await readJsonFile<StoryRecord>(
     resolveStoryPath(slug, 'story.json'),
     null as unknown as StoryRecord,
   );
+  // Stories created before the archive feature shipped have no archived/archivedAt fields on disk.
+  return { ...story, archived: story.archived ?? false, archivedAt: story.archivedAt ?? null };
 }
 
 async function writeStory(story: StoryRecord): Promise<void> {
@@ -235,6 +241,8 @@ async function writeStory(story: StoryRecord): Promise<void> {
             status: updatedStory.status,
             sourceType: updatedStory.sourceType,
             updatedAt: updatedStory.updatedAt,
+            archived: updatedStory.archived,
+            archivedAt: updatedStory.archivedAt,
           }
         : entry,
     ),
@@ -367,7 +375,10 @@ export async function getStoryDetail(slug: string): Promise<StoryDetail> {
 
 export async function listStories(): Promise<StoryIndexEntry[]> {
   const index = await readStoryIndex();
-  return index.stories.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  return index.stories
+    // Entries created before the archive feature shipped have no archived/archivedAt fields on disk.
+    .map((entry) => ({ ...entry, archived: entry.archived ?? false, archivedAt: entry.archivedAt ?? null }))
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
 export async function writeWorkerResult(

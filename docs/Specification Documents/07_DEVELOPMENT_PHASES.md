@@ -46,7 +46,7 @@ Deliverables:
 
 - Characters tab.
 - Segment tab.
-- Character role and VieNue voice fields.
+- Character role and voice-registry fields.
 - Segment speaker/text/order editor.
 - Explicit approve/accept segments button.
 - Segment approval/rejection.
@@ -76,7 +76,7 @@ Acceptance:
 - UI can start a test worker.
 - Logs appear in UI.
 - Failed job marks status failed.
-- App restart can read previous job records.
+- App restart can read previous job records. Known gap: a job that was `running` when the Next.js process was killed has no automatic recovery — it stays `running` with no stale-lock clearing UI.
 
 ## Phase 5: Story Processing Worker
 
@@ -96,18 +96,18 @@ Acceptance:
 - Worker creates ordered speaker segments.
 - User can edit generated output before TTS.
 
-## Phase 6: VieNue TTS And Whisper Verification Worker
+## Phase 6: OmniVoice TTS And Whisper Verification Worker
 
-Goal: generate one WAV per approved segment and verify it automatically.
+Goal: generate one WAV per approved segment and optionally verify it automatically.
 
 Deliverables:
 
 - `generate_verify_tts.py`.
-- VieNue config/env support.
-- Whisper config/env support.
-- Per-character voice use.
+- OmniVoice config/env support (in-process model, no external host).
+- Whisper config/env support, gated by an on/off toggle (default off).
+- Per-character voice use from the cloned-voice registry.
 - Per-segment audio outputs.
-- Per-segment Whisper transcript outputs.
+- Per-segment Whisper transcript outputs, when verification is enabled.
 - Failed-segment regeneration loop.
 - Audio player UI for segment files.
 - Verification status UI.
@@ -116,11 +116,10 @@ Acceptance:
 
 - Approved segments can produce WAV files.
 - Audio stored under `audio/segments/`.
-- Whisper transcript stored under `tmp/whisper/`.
-- If Whisper cannot transcribe a segment, exact segment is regenerated.
-- Regeneration loop stops only when segment passes or reaches max attempts.
+- When verification is enabled: Whisper transcript stored under `tmp/whisper/`, and if Whisper cannot transcribe a segment, that exact segment is regenerated, looping until it passes or reaches max attempts.
+- When verification is disabled: segments are marked `complete`/`passed` immediately after generation.
 - Failed segments are visible and rerunnable.
-- Secrets are not written to logs/story files.
+- There are no TTS provider secrets to leak (OmniVoice needs none).
 
 ## Phase 7: User Validation And FFmpeg Final Audio Concat
 
@@ -152,8 +151,8 @@ Goal: make local audio tool usable repeatedly.
 Deliverables:
 
 - Error states.
-- Stale lock handling.
-- Archive story.
+- Stale lock handling — **not yet implemented**, still an open gap.
+- Archive story — done: flag-based (`archived`/`archivedAt` on `story.json` + index entry), dashboard filter, job-start guard.
 - Basic validation messages.
 - Audio QC checks.
 - Verification retry visibility.
@@ -162,8 +161,8 @@ Deliverables:
 Acceptance:
 
 - One complete audio package can be produced end to end.
-- Failed jobs are recoverable.
-- Failed verification is visible and actionable.
+- Failed jobs are recoverable — **partially**: job records survive a restart, but a job stuck at `running` from a killed process has no recovery path yet.
+- Failed verification is visible and actionable, when verification is enabled.
 - User can understand required setup.
 
 ## Dependencies
@@ -171,11 +170,10 @@ Acceptance:
 Required local tools:
 
 - Node.js.
-- Python 3.
+- Python 3 (with the `workers/.venv` environment containing OmniVoice's dependencies).
 - FFmpeg.
-- Whisper implementation available locally.
+- Whisper implementation available locally (only needed if verification is enabled).
 - Package manager.
-- Local VieNue TTS host with OpenAI-compatible API.
 
 ## Build Order
 
@@ -186,7 +184,7 @@ Recommended order:
 3. Character/segment UI.
 4. Worker integration.
 5. Story processing worker.
-6. VieNue TTS + Whisper verification worker.
+6. OmniVoice TTS + Whisper verification worker.
 7. User validation + FFmpeg concat worker.
 8. Audio review and reliability polish.
 

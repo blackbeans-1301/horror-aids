@@ -104,55 +104,35 @@ Notes:
 Input:
 
 - Approved `text/segments.json`.
-- `text/characters.json` with VieNue voice IDs.
-- VieNue config/env.
-- Whisper config/env.
+- `text/characters.json` with voice IDs from `data/voices.json`.
+- OmniVoice config/env.
+- Whisper config/env, if verification is enabled.
 
 Output:
 
 - `audio/segments/[segment-id]-[speaker-id].wav`.
-- `tmp/whisper/[segment-id]-[speaker-id].txt`.
+- `tmp/whisper/[segment-id]-[speaker-id].txt` (only written when verification is enabled).
 - Updated segment statuses in result JSON.
 
-VieNue API contract:
+OmniVoice generation contract (in-process, no HTTP call):
 
-```text
-POST {VIENUE_TTS_BASE_URL}{VIENUE_TTS_ENDPOINT}
+```python
+model = get_omnivoice_model(model_repo, device)  # workers/common.py, cached per (repo, device)
+audios = model.generate(text=segment_text, language="vi", ref_audio=str(resolve_voice_wav(voice_id)))
 ```
 
-Default endpoint:
-
-```text
-/v1/audio/speech
-```
-
-Request shape:
-
-```json
-{
-  "model": "${VIENUE_TTS_MODEL}",
-  "voice": "vienue_voice_id",
-  "input": "Segment text.",
-  "response_format": "wav"
-}
-```
-
-Headers:
-
-```text
-Authorization: Bearer ${VIENUE_TTS_API_KEY}
-```
+Config precedence: `OMNIVOICE_MODEL`/`OMNIVOICE_DEVICE` env vars override `config/app.json`'s `omnivoice.model`/`omnivoice.device`, which default to `k2-fsa/OmniVoice`/`auto`.
 
 Rules:
 
-- API key is optional for local VieNue host if not required.
+- No API key or network call — OmniVoice is a local Python model loaded from `workers/.venv`.
 - Generate one audio file per segment.
 - Skip segments marked `skipped`.
-- Do not overwrite completed and verified segment audio unless user requests regeneration.
-- Log provider/model/voice/segment ID, but never log API key.
-- Normalize/resample output if needed before verification/concat.
+- A full (non-targeted) "Generate + verify" run currently re-processes every non-skipped segment, including ones already `complete`/`passed` — regeneration is not yet scoped to only failed/targeted segments outside of an explicit `--segments` regenerate request. Treat "do not overwrite completed/verified audio" as true only for targeted regeneration, not a full run.
+- Log model repo/device/voice ID/segment ID — there is no secret to withhold.
+- `HORROR_AIDS_FAKE_TTS=1` (or unset, since it defaults on) generates a placeholder tone WAV instead of running the real model, for fast local development without downloading weights.
 
-Whisper verification contract:
+Whisper verification contract (only runs when `whisper.enabled` in `config/app.json`, or `AUDIO_VERIFY_ENABLED`, is true — default is **disabled**):
 
 - Transcribe each generated segment WAV after TTS generation.
 - Write transcript to `tmp/whisper/[segment-id]-[speaker-id].txt`.
@@ -161,6 +141,11 @@ Whisper verification contract:
 - Regenerate only that exact segment and rerun Whisper verification.
 - Repeat until verification passes or `AUDIO_VERIFY_MAX_ATTEMPTS` is reached.
 - If max attempts is reached, mark segment `verification_failed` and job `needs_review` or `failed` depending whether any unresolved segment remains.
+
+When verification is disabled:
+
+- Each segment is marked `verification.status: "passed"` and `status: "complete"` immediately after generation, without ever being transcribed. `transcriptPreview` stays `null`.
+- This is the default because Whisper (model load + transcription pass per batch) was the slowest part of a generation run; the tradeoff is that bad audio is only caught by listening to the output, not automatically.
 
 Recommended verification checks:
 
@@ -268,7 +253,7 @@ Worker failure:
 - Mark job `failed`.
 - Do not update story status to next stage.
 
-VieNue failure:
+OmniVoice generation failure:
 
 - Mark failed segment in result.
 - Keep successful segment audio.
@@ -285,15 +270,15 @@ FFmpeg failure:
 
 - Include command and stderr in log.
 - Keep input segment files unchanged.
-- Do not overwrite last approved final WAV unless concat succeeds.
+- Known gap: `concat_audio.py` currently overwrites `audio/final.wav` on every run regardless of prior approval — there is no "don't clobber an approved final WAV" guard yet.
 
 ## Quality Checks
 
 Before generate/verify job `complete`:
 
 - Every non-skipped segment has audio file.
-- Every non-skipped segment has Whisper transcript.
-- Every non-skipped segment verification status is `passed`.
+- Every non-skipped segment has Whisper transcript, when verification is enabled.
+- Every non-skipped segment verification status is `passed` (or `complete` without transcription if verification is disabled).
 - Output files are size > 0.
 
 Before concat job `complete`:

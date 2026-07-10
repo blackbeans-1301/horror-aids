@@ -26,7 +26,7 @@ def build_segment(segment_id: int, speaker_id: str, text: str) -> dict[str, Any]
         "order": segment_id,
         "speakerId": speaker_id,
         "text": text.strip(),
-        # Narration reads best in VieNeu's storytelling mode; dialogue stays natural.
+        # Narration reads best in OmniVoice's storytelling mode; dialogue stays natural.
         "emotion": "storytelling" if speaker_id == "narrator" else "natural",
         "audioPath": f"audio/segments/{padded}-{speaker_id}.wav",
         "whisperTranscriptPath": f"tmp/whisper/{padded}-{speaker_id}.txt",

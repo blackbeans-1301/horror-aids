@@ -35,7 +35,7 @@ Actions:
 
 - Create story.
 - Open story.
-- Archive story.
+- Archive/unarchive story (filter toggle between Active and Archived).
 
 ### Create Story
 
@@ -95,7 +95,7 @@ Capabilities:
 - View/edit `text/characters.json` through form UI.
 - Add/remove character.
 - Set role: narrator, main character, side character, villain, other.
-- Assign VieNue voice ID per character.
+- Assign a voice per character from the cloned-voice registry (managed on the Settings screen).
 
 Rules:
 
@@ -152,6 +152,18 @@ Capabilities:
 - Show error status.
 - Show verification failure details.
 
+### Settings
+
+Route: `/settings`
+
+Not a story-scoped screen — configures the shared OmniVoice engine and voice registry used by every story.
+
+Shows/does:
+
+- Current OmniVoice model repo and compute device (auto/CPU/MPS/CUDA), with a form to change either.
+- Whisper verification on/off toggle (`config/app.json`'s `whisper.enabled`), default off.
+- Upload a reference WAV (3-5s) to add a cloned voice; preview any voice with a short synthesized sample; delete cloned voices.
+
 ## API Endpoints
 
 Recommended local API routes:
@@ -174,7 +186,15 @@ POST   /api/stories/[slug]/jobs
 GET    /api/jobs
 GET    /api/jobs/[jobId]
 GET    /api/jobs/[jobId]/log
+GET    /api/tts-config
+POST   /api/tts-config
+GET    /api/voices
+POST   /api/voices
+DELETE /api/voices
+GET    /api/voice-preview
 ```
+
+`PATCH /api/stories/[slug]` also accepts `{ archived: boolean }` to archive/unarchive a story (sets/clears `archivedAt`).
 
 Allowed job types from UI:
 
@@ -231,7 +251,7 @@ When user starts job:
 - User can write/edit story text.
 - User can process story into characters and segments.
 - User can edit and approve segments.
-- User can assign VieNue voices.
+- User can assign cloned voices from the Settings voice registry.
 - User can start generate/verify TTS job only after segment approval.
 - User can see Whisper transcript and verification status per segment.
 - Failed verification regenerates exact segment.

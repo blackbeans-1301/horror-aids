@@ -4,7 +4,7 @@
     "device": "auto"
   },
   "whisper": {
-    "enabled": true,
+    "enabled": false,
     "model": "base",
     "language": "vi",
     "minTextRatio": 0.6,

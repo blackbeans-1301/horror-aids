@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { Mic, Play, RefreshCw, Trash2, Upload } from 'lucide-react';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { toast } from 'react-toastify';
 
 import { storiesApi, type VoiceOption } from '@/features/stories/api/storiesApi';
 import { AppShell } from '@/features/stories/components/AppShell';
@@ -89,7 +90,6 @@ export const SettingsClient: React.FC = () => {
     }
 
     setIsBusy(true);
-    setMessage('Saving...');
     try {
       const response = await fetch('/api/tts-config', {
         method: 'POST',
@@ -104,14 +104,14 @@ export const SettingsClient: React.FC = () => {
       setSelectedModel(data.model);
       setSelectedDevice(data.device);
       setSelectedVerificationEnabled(data.verificationEnabled);
-      setMessage(
+      toast.success(
         `Saved — ${data.modelLabel} on ${data.device.toUpperCase()} will be used for the next ` +
           'preview or generation run (first real run downloads the model, which can take a while). ' +
           `Audio verification is ${data.verificationEnabled ? 'ON' : 'OFF'}.`,
       );
       await refresh();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Save failed');
+      toast.error(error instanceof Error ? error.message : 'Save failed');
     } finally {
       setIsBusy(false);
     }
@@ -120,16 +120,15 @@ export const SettingsClient: React.FC = () => {
   const uploadVoice = useCallback(async (): Promise<void> => {
     const file = fileInputRef.current?.files?.[0];
     if (!file) {
-      setMessage('Choose a WAV file first.');
+      toast.error('Choose a WAV file first.');
       return;
     }
     if (!voiceName.trim()) {
-      setMessage('Give the voice a name first.');
+      toast.error('Give the voice a name first.');
       return;
     }
 
     setIsBusy(true);
-    setMessage('Uploading and encoding reference clip...');
     try {
       const buffer = await file.arrayBuffer();
       let binary = '';
@@ -147,14 +146,14 @@ export const SettingsClient: React.FC = () => {
       if (!response.ok) {
         throw new Error(data.error ?? 'Upload failed');
       }
-      setMessage(`Voice ${data.id} is ready to use in the Characters tab.`);
+      toast.success(`Voice ${data.id} is ready to use in the Characters tab.`);
       setVoiceName('');
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
       }
       await refresh();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Upload failed');
+      toast.error(error instanceof Error ? error.message : 'Upload failed');
     } finally {
       setIsBusy(false);
     }
@@ -163,7 +162,6 @@ export const SettingsClient: React.FC = () => {
   const deleteVoice = useCallback(
     async (voiceId: string): Promise<void> => {
       setIsBusy(true);
-      setMessage(`Deleting ${voiceId}...`);
       try {
         const response = await fetch(`/api/voices?id=${encodeURIComponent(voiceId)}`, {
           method: 'DELETE',
@@ -172,10 +170,10 @@ export const SettingsClient: React.FC = () => {
         if (!response.ok) {
           throw new Error(data.error ?? 'Delete failed');
         }
-        setMessage(`Deleted ${voiceId}.`);
+        toast.success(`Deleted ${voiceId}.`);
         await refresh();
       } catch (error) {
-        setMessage(error instanceof Error ? error.message : 'Delete failed');
+        toast.error(error instanceof Error ? error.message : 'Delete failed');
       } finally {
         setIsBusy(false);
       }

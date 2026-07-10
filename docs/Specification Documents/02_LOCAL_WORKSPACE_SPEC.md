@@ -13,7 +13,9 @@ horror-aids/
   data/
     index.json
     jobs.json
-    settings.json
+    voices.json
+    voices/
+      [voice-id].wav
   stories/
     [story-slug]/
       story.json
@@ -84,7 +86,9 @@ Contains only summary fields:
       "language": "vi",
       "sourceType": "manual",
       "storyPath": "stories/can-phong-cuoi-hanh-lang/story.json",
-      "updatedAt": "2026-06-12T00:00:00.000Z"
+      "updatedAt": "2026-06-12T00:00:00.000Z",
+      "archived": false,
+      "archivedAt": null
     }
   ]
 }
@@ -107,6 +111,8 @@ Example:
   "status": "segments_review",
   "createdAt": "2026-06-12T00:00:00.000Z",
   "updatedAt": "2026-06-12T00:00:00.000Z",
+  "archived": false,
+  "archivedAt": null,
   "text": {
     "storyPath": "text/story.md",
     "charactersPath": "text/characters.json",
@@ -134,6 +140,27 @@ Example:
 }
 ```
 
+### `data/voices.json`
+
+Purpose: cloned-voice registry shared across all stories.
+
+Example:
+
+```json
+{
+  "voices": [
+    {
+      "id": "ong-noi-ke-chuyen",
+      "name": "Ong Noi Ke Chuyen",
+      "wavPath": "data/voices/ong-noi-ke-chuyen.wav",
+      "createdAt": "2026-06-12T00:00:00.000Z"
+    }
+  ]
+}
+```
+
+Reference clips live under `data/voices/[id].wav` (uploaded from Settings, 3-5s recommended); only the path is stored in JSON.
+
 ### `text/characters.json`
 
 Purpose: narrator and character voice map.
@@ -147,17 +174,19 @@ Example:
       "id": "narrator",
       "name": "Narrator",
       "role": "narrator",
-      "voice": "vienue_voice_id"
+      "voice": "ong-noi-ke-chuyen"
     },
     {
       "id": "main-character",
       "name": "Main Character",
       "role": "main_character",
-      "voice": "vienue_voice_id_2"
+      "voice": "some-other-voice-id"
     }
   ]
 }
 ```
+
+`voice` is an ID from `data/voices.json`, resolved to its reference WAV by the worker at generation time; an unknown ID fails that segment rather than silently falling back.
 
 Roles:
 
@@ -181,6 +210,7 @@ Example:
       "order": 1,
       "speakerId": "narrator",
       "text": "Segment text here.",
+      "emotion": "storytelling",
       "audioPath": "audio/segments/0001-narrator.wav",
       "whisperTranscriptPath": "tmp/whisper/0001-narrator.txt",
       "status": "pending",
@@ -194,6 +224,8 @@ Example:
   ]
 }
 ```
+
+`emotion` is `natural` (default for dialogue) or `storytelling` (default for the narrator); segment text can also carry inline cues like `[cười]`/`[thở dài]`/`[hắng giọng]` that the UI documents as typed directly into the segment text.
 
 Segment status:
 
@@ -260,21 +292,22 @@ Source type:
 
 MVP simple rule:
 
-- UI prevents more than one active job per story.
-- Active job writes lock marker: `tmp/job.lock`.
-- On crash, stale lock can be cleared manually from UI.
+- UI prevents more than one active job per story by checking `data/jobs.json` for a `running` job on that story (no separate lock file).
+- Known gap: if the Next.js process is killed mid-job, the job record stays `running` forever with no stale-lock recovery UI yet.
 
 ## Archive/Delete
 
 Archive:
 
-- Move story folder to `stories/_archive/[slug]/`.
-- Mark story removed from `data/index.json`.
+- Set `archived: true` and `archivedAt` (ISO timestamp) on `story.json` and its `data/index.json` entry via `PATCH /api/stories/[slug]`.
+- Story folder is never moved — this avoids breaking any relative path a running or reopened job depends on.
+- Dashboard hides archived stories from the default (Active) view behind a filter toggle.
+- Unarchiving clears `archived`/`archivedAt`, restoring the story to the Active view and re-enabling jobs.
 
 Delete:
 
-- MVP should avoid hard delete from UI.
-- Provide archive first.
+- MVP has no hard delete from UI.
+- Archive is the only removal-from-view mechanism.
 
 ## Validation
 
@@ -289,12 +322,12 @@ Before TTS:
 - `text/segments.json` exists.
 - Segments are approved by user button.
 - Every segment has valid `speakerId`.
-- Every speaker has a VieNue voice.
+- Every speaker has a voice assigned from `data/voices.json`.
 
 Before user audio validation:
 
 - Every non-skipped segment has WAV file.
-- Every non-skipped segment has Whisper verification status `passed`.
+- Every non-skipped segment has Whisper verification status `passed` (or is `complete` without transcription if verification is disabled — see `03_WORKER_PIPELINE_SPEC.md`).
 - Failed segments have reached neither unhandled nor silent state.
 
 Before concat:
