@@ -1,4 +1,4 @@
-import { AudioLines, Check, Play, RefreshCw } from 'lucide-react';
+import { AudioLines, Check, Download, Play, RefreshCw } from 'lucide-react';
 import React from 'react';
 
 import { StoryPlayer } from '@/features/stories/components/workspace/StoryPlayer';
@@ -108,6 +108,7 @@ export const AudioTab: React.FC<AudioTabProps> = ({
         onSegmentEnded={onSegmentEnded}
       />
 
+      <div className="table-wrap">
       <table className="table">
         <thead>
           <tr>
@@ -189,10 +190,19 @@ export const AudioTab: React.FC<AudioTabProps> = ({
           ))}
         </tbody>
       </table>
+      </div>
       <div className="panel">
         <h3>Final WAV</h3>
         {finalAudioExists ? (
-          <audio controls src={assetUrl(slug, finalAudioPath)} />
+          <>
+            <audio controls src={assetUrl(slug, finalAudioPath)} />
+            <div className="button-row">
+              <a className="button secondary" href={assetUrl(slug, finalAudioPath)} download={`${slug}-final.wav`}>
+                <Download size={16} aria-hidden="true" />
+                Download final WAV
+              </a>
+            </div>
+          </>
         ) : (
           <p>Final audio will appear after concat.</p>
         )}

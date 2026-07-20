@@ -54,6 +54,17 @@ export function useStoryWorkspace(slug: string) {
   // Unsaved local edits must survive the 3s polling refresh; each flag blocks
   // the server snapshot from overwriting that piece of state until saved.
   const dirtyRef = useRef({ story: false, characters: false, segments: false });
+  // Mirrors dirtyRef for the UI (refs don't trigger re-renders).
+  const [dirty, setDirty] = useState({ story: false, characters: false, segments: false });
+  type DirtyKey = 'story' | 'characters' | 'segments';
+  const markDirty = useCallback((key: DirtyKey): void => {
+    dirtyRef.current[key] = true;
+    setDirty((current) => ({ ...current, [key]: true }));
+  }, []);
+  const clearDirty = useCallback((key: DirtyKey): void => {
+    dirtyRef.current[key] = false;
+    setDirty((current) => ({ ...current, [key]: false }));
+  }, []);
   const hadDetailRef = useRef(false);
   const pollErrorWarnedRef = useRef(false);
 
@@ -222,23 +233,23 @@ export function useStoryWorkspace(slug: string) {
   const saveStory = useCallback(async (): Promise<void> => {
     await runAction(async () => {
       await storiesApi.saveStoryText(slug, storyText);
-      dirtyRef.current.story = false;
+      clearDirty('story');
     }, 'Story saved.');
-  }, [runAction, slug, storyText]);
+  }, [clearDirty, runAction, slug, storyText]);
 
   const saveCharacters = useCallback(async (): Promise<void> => {
     await runAction(async () => {
       await storiesApi.saveCharacters(slug, { characters });
-      dirtyRef.current.characters = false;
+      clearDirty('characters');
     }, 'Characters saved.');
-  }, [characters, runAction, slug]);
+  }, [characters, clearDirty, runAction, slug]);
 
   const saveSegments = useCallback(async (): Promise<void> => {
     await runAction(async () => {
       await storiesApi.saveSegments(slug, { segments });
-      dirtyRef.current.segments = false;
+      clearDirty('segments');
     }, 'Segments saved.');
-  }, [runAction, segments, slug]);
+  }, [clearDirty, runAction, segments, slug]);
 
   const approveSegments = useCallback(async (): Promise<void> => {
     await runAction(
@@ -281,30 +292,52 @@ export function useStoryWorkspace(slug: string) {
     }
   }, [loadJobLog, selectedJobId, detail?.activeJob?.status]);
 
+  // Tail the running job's log so progress is visible without re-selecting it.
+  useEffect(() => {
+    if (!detail?.activeJob || detail.activeJob.id !== selectedJobId) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      void loadJobLog(selectedJobId);
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [detail?.activeJob, loadJobLog, selectedJobId]);
+
+  useEffect(() => {
+    const handler = (event: BeforeUnloadEvent): void => {
+      if (dirty.story || dirty.characters || dirty.segments) {
+        event.preventDefault();
+        event.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [dirty]);
+
   const updateCharacter = useCallback((index: number, patch: Partial<CharacterRecord>): void => {
-    dirtyRef.current.characters = true;
+    markDirty('characters');
     setCharacters((current) =>
       current.map((character, characterIndex) =>
         characterIndex === index ? { ...character, ...patch } : character,
       ),
     );
-  }, []);
+  }, [markDirty]);
 
   const addCharacter = useCallback((): void => {
-    dirtyRef.current.characters = true;
+    markDirty('characters');
     setCharacters((current) => [
       ...current,
       { id: `character-${current.length + 1}`, name: `Character ${current.length + 1}`, role: 'other', voice: '' },
     ]);
-  }, []);
+  }, [markDirty]);
 
   const removeCharacter = useCallback((index: number): void => {
-    dirtyRef.current.characters = true;
+    markDirty('characters');
     setCharacters((current) => current.filter((_, characterIndex) => characterIndex !== index));
-  }, []);
+  }, [markDirty]);
 
   const updateSegment = useCallback((index: number, patch: Partial<SegmentRecord>): void => {
-    dirtyRef.current.segments = true;
+    markDirty('segments');
     setSegments((current) =>
       current.map((segment, segmentIndex) => {
         if (segmentIndex !== index) {
@@ -319,18 +352,18 @@ export function useStoryWorkspace(slug: string) {
         return next;
       }),
     );
-  }, []);
+  }, [markDirty]);
 
   const addSegment = useCallback((): void => {
-    dirtyRef.current.segments = true;
+    markDirty('segments');
     setSegments((current) => {
       const inserted = createEmptySegment(nextLocalSegmentId(current));
       return [...current, { ...inserted, order: current.length + 1 }];
     });
-  }, []);
+  }, [markDirty]);
 
   const insertSegmentAfter = useCallback((index: number): void => {
-    dirtyRef.current.segments = true;
+    markDirty('segments');
     setSegments((current) => {
       const anchor = current[index];
       const inserted = createEmptySegment(nextLocalSegmentId(current), anchor?.speakerId ?? 'narrator');
@@ -338,15 +371,15 @@ export function useStoryWorkspace(slug: string) {
       next.splice(index + 1, 0, inserted);
       return next.map((segment, orderIndex) => ({ ...segment, order: orderIndex + 1 }));
     });
-  }, []);
+  }, [markDirty]);
 
   const deleteSegment = useCallback((index: number): void => {
-    dirtyRef.current.segments = true;
+    markDirty('segments');
     setSegments((current) => current.filter((_, segmentIndex) => segmentIndex !== index));
-  }, []);
+  }, [markDirty]);
 
   const splitSegment = useCallback((index: number): void => {
-    dirtyRef.current.segments = true;
+    markDirty('segments');
     setSegments((current) => {
       const target = current[index];
       if (!target) {
@@ -367,10 +400,10 @@ export function useStoryWorkspace(slug: string) {
       next.splice(index + 1, 0, inserted);
       return next.map((segment, orderIndex) => ({ ...segment, order: orderIndex + 1 }));
     });
-  }, []);
+  }, [markDirty]);
 
   const mergeWithNext = useCallback((index: number): void => {
-    dirtyRef.current.segments = true;
+    markDirty('segments');
     setSegments((current) => {
       const target = current[index];
       const nextSegment = current[index + 1];
@@ -386,7 +419,7 @@ export function useStoryWorkspace(slug: string) {
         .filter((_, segmentIndex) => segmentIndex !== index + 1)
         .map((segment, orderIndex) => ({ ...segment, order: orderIndex + 1 }));
     });
-  }, []);
+  }, [markDirty]);
 
   return {
     slug,
@@ -396,7 +429,7 @@ export function useStoryWorkspace(slug: string) {
     setActiveTab,
     storyText,
     setStoryText: (value: string): void => {
-      dirtyRef.current.story = true;
+      markDirty('story');
       setStoryText(value);
     },
     characters,
@@ -405,6 +438,7 @@ export function useStoryWorkspace(slug: string) {
     selectedJob,
     jobLog,
     isBusy,
+    dirty,
     voices,
     voicesError,
     regenSelection,

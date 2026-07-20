@@ -8,6 +8,7 @@ interface StoryTabProps {
   onProcessStory: () => void;
   isBusy: boolean;
   canProcess: boolean;
+  isDirty: boolean;
 }
 
 export const StoryTab: React.FC<StoryTabProps> = ({
@@ -17,10 +18,14 @@ export const StoryTab: React.FC<StoryTabProps> = ({
   onProcessStory,
   isBusy,
   canProcess,
+  isDirty,
 }) => {
   return (
     <section className="panel form">
-      <h2>Story Editor</h2>
+      <div className="page-header">
+        <h2>Story Editor</h2>
+        {isDirty ? <span className="badge unsaved">Unsaved changes</span> : null}
+      </div>
       <textarea
         className="textarea large"
         value={storyText}

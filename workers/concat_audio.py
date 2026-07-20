@@ -8,14 +8,35 @@ from pathlib import Path
 from common import atomic_write, load_context
 
 
-def python_concat(output_path: Path, input_paths: list[Path]) -> None:
+DEFAULT_SEGMENT_GAP_MS = 500
+
+
+def silence_frames(params: wave._wave_params, gap_ms: int) -> bytes:
+    frame_count = int(params.framerate * gap_ms / 1000)
+    # 8-bit PCM is unsigned, so silence sits at the 0x80 midpoint.
+    fill = b"\x80" if params.sampwidth == 1 else b"\x00"
+    return fill * (frame_count * params.nchannels * params.sampwidth)
+
+
+def write_silence_wav(path: Path, params: wave._wave_params, gap_ms: int) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(path), "wb") as output:
+        output.setnchannels(params.nchannels)
+        output.setsampwidth(params.sampwidth)
+        output.setframerate(params.framerate)
+        output.writeframes(silence_frames(params, gap_ms))
+
+
+def python_concat(output_path: Path, input_paths: list[Path], gap_ms: int) -> None:
     with wave.open(str(input_paths[0]), "rb") as first:
         params = first.getparams()
         frames = [first.readframes(first.getnframes())]
+    gap = silence_frames(params, gap_ms)
     for path in input_paths[1:]:
         with wave.open(str(path), "rb") as audio:
             if audio.getparams()[:3] != params[:3]:
                 raise RuntimeError("WAV params differ and ffmpeg is unavailable")
+            frames.append(gap)
             frames.append(audio.readframes(audio.getnframes()))
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with wave.open(str(output_path), "wb") as output:
@@ -31,10 +52,11 @@ def main() -> int:
     if story["approvals"]["verifiedAudio"]["status"] != "approved":
         raise ValueError("verified output must be confirmed before concat")
 
+    gap_ms = int(ctx.config().get("audio", {}).get("segmentGapMs", DEFAULT_SEGMENT_GAP_MS))
+
     segments_file = ctx.read_json(story["text"]["segmentsPath"], {"segments": []})
     ordered_segments = sorted(segments_file["segments"], key=lambda item: item["order"])
     input_paths: list[Path] = []
-    concat_lines: list[str] = []
     for segment in ordered_segments:
         if segment.get("status") == "skipped":
             continue
@@ -44,10 +66,20 @@ def main() -> int:
         if not audio_path.exists():
             raise FileNotFoundError(audio_path)
         input_paths.append(audio_path)
-        concat_lines.append(f"file '{audio_path.as_posix()}'")
 
     if not input_paths:
         raise ValueError("no segment audio files to concatenate")
+
+    silence_path = ctx.resolve("tmp/segment-gap.wav")
+    if gap_ms > 0:
+        with wave.open(str(input_paths[0]), "rb") as first:
+            write_silence_wav(silence_path, first.getparams(), gap_ms)
+
+    concat_lines: list[str] = []
+    for index, audio_path in enumerate(input_paths):
+        if index > 0 and gap_ms > 0:
+            concat_lines.append(f"file '{silence_path.as_posix()}'")
+        concat_lines.append(f"file '{audio_path.as_posix()}'")
 
     concat_list_path = ctx.resolve("tmp/concat-list.txt")
     atomic_write(concat_list_path, "\n".join(concat_lines) + "\n")
@@ -73,7 +105,7 @@ def main() -> int:
             raise RuntimeError(completed.stderr.strip() or "ffmpeg concat failed")
     else:
         ctx.log("ffmpeg not found; using Python WAV concat fallback")
-        python_concat(output_path, input_paths)
+        python_concat(output_path, input_paths, gap_ms)
 
     if not output_path.exists() or output_path.stat().st_size == 0:
         raise RuntimeError("final wav was not created")

@@ -5,6 +5,7 @@ import { AudioLines, FileText, ListChecks, RefreshCw, Scissors, Terminal, Users 
 import React from 'react';
 
 import { AppShell } from '@/features/stories/components/AppShell';
+import { ActiveJobBanner } from '@/features/stories/components/workspace/ActiveJobBanner';
 import { AudioTab } from '@/features/stories/components/workspace/AudioTab';
 import { CharactersTab } from '@/features/stories/components/workspace/CharactersTab';
 import { LogsTab } from '@/features/stories/components/workspace/LogsTab';
@@ -40,6 +41,7 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
     selectedJob,
     jobLog,
     isBusy,
+    dirty,
     voices,
     voicesError,
     regenSelection,
@@ -108,6 +110,10 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
 
         {loadError ? <p className="panel">{loadError}</p> : null}
 
+        {detail?.activeJob ? (
+          <ActiveJobBanner job={detail.activeJob} onViewLog={() => setActiveTab('logs')} />
+        ) : null}
+
         <div className="tabs">
           {tabs.map((tab) => (
             <button
@@ -149,6 +155,7 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
             onProcessStory={() => void startJob('process_story')}
             isBusy={isBusy}
             canProcess={canProcess}
+            isDirty={dirty.story}
           />
         ) : null}
 
@@ -162,6 +169,7 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
             onAddCharacter={addCharacter}
             onRemoveCharacter={removeCharacter}
             onSaveCharacters={() => void saveCharacters()}
+            isDirty={dirty.characters}
           />
         ) : null}
 
@@ -179,6 +187,7 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
             onMergeWithNext={mergeWithNext}
             onSaveSegments={() => void saveSegments()}
             onApproveSegments={() => void approveSegments()}
+            isDirty={dirty.segments}
           />
         ) : null}
 

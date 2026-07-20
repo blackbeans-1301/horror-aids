@@ -343,6 +343,73 @@ audio {
   width: 100%;
 }
 
+.table-wrap {
+  overflow-x: auto;
+}
+
+.table-wrap .table {
+  min-width: 720px;
+}
+
+.button:focus-visible,
+.tab:focus-visible,
+.story-item:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.badge.unsaved {
+  color: #f4cf91;
+  border-color: rgba(200, 143, 61, 0.5);
+}
+
+.job-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  margin-bottom: 18px;
+  border: 1px solid var(--accent);
+  background: rgba(200, 143, 61, 0.12);
+  border-radius: 8px;
+  color: var(--text);
+}
+
+.job-banner .button {
+  margin-left: auto;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 100;
+}
+
+.modal {
+  width: min(420px, 100%);
+  display: grid;
+  gap: 12px;
+}
+
 @media (max-width: 920px) {
   .grid,
   .split {

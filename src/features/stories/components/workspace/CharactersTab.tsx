@@ -1,6 +1,7 @@
 import { Save, Trash2 } from 'lucide-react';
 import React from 'react';
 
+import { useConfirm } from '@/components/ConfirmDialog';
 import type { VoiceOption } from '@/features/stories/api/storiesApi';
 import type { CharacterRecord, CharacterRole } from '@/types/story';
 
@@ -15,6 +16,7 @@ interface CharactersTabProps {
   onAddCharacter: () => void;
   onRemoveCharacter: (index: number) => void;
   onSaveCharacters: () => void;
+  isDirty: boolean;
 }
 
 export const CharactersTab: React.FC<CharactersTabProps> = ({
@@ -26,7 +28,23 @@ export const CharactersTab: React.FC<CharactersTabProps> = ({
   onAddCharacter,
   onRemoveCharacter,
   onSaveCharacters,
+  isDirty,
 }) => {
+  const confirm = useConfirm();
+
+  const handleRemove = async (index: number): Promise<void> => {
+    const character = characters[index];
+    const confirmed = await confirm({
+      title: 'Remove character?',
+      description: `Remove "${character?.name ?? character?.id}"? Any segments still assigned to this speaker will need a new voice before you can accept them for TTS.`,
+      confirmLabel: 'Remove',
+      danger: true,
+    });
+    if (confirmed) {
+      onRemoveCharacter(index);
+    }
+  };
+
   return (
     <section className="panel form">
       <div className="page-header">
@@ -38,10 +56,14 @@ export const CharactersTab: React.FC<CharactersTabProps> = ({
           </p>
           {voicesError ? <p className="label">{voicesError}</p> : null}
         </div>
-        <button className="button secondary" type="button" onClick={onAddCharacter}>
-          Add character
-        </button>
+        <div className="button-row">
+          {isDirty ? <span className="badge unsaved">Unsaved changes</span> : null}
+          <button className="button secondary" type="button" onClick={onAddCharacter}>
+            Add character
+          </button>
+        </div>
       </div>
+      <div className="table-wrap">
       <table className="table">
         <thead>
           <tr>
@@ -114,8 +136,9 @@ export const CharactersTab: React.FC<CharactersTabProps> = ({
                 <button
                   className="button danger"
                   type="button"
-                  onClick={() => onRemoveCharacter(index)}
+                  onClick={() => void handleRemove(index)}
                   disabled={character.role === 'narrator'}
+                  title={character.role === 'narrator' ? 'The narrator cannot be removed' : `Remove ${character.name}`}
                 >
                   <Trash2 size={15} aria-hidden="true" />
                 </button>
@@ -124,6 +147,7 @@ export const CharactersTab: React.FC<CharactersTabProps> = ({
           ))}
         </tbody>
       </table>
+      </div>
       <button className="button" type="button" onClick={onSaveCharacters} disabled={isBusy}>
         <Save size={16} aria-hidden="true" />
         Save characters

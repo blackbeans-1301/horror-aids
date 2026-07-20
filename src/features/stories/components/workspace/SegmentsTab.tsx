@@ -1,6 +1,7 @@
 import { Check, Save, Trash2 } from 'lucide-react';
 import React from 'react';
 
+import { useConfirm } from '@/components/ConfirmDialog';
 import type { CharacterRecord, SegmentEmotion, SegmentRecord } from '@/types/story';
 
 interface SegmentsTabProps {
@@ -16,6 +17,7 @@ interface SegmentsTabProps {
   onMergeWithNext: (index: number) => void;
   onSaveSegments: () => void;
   onApproveSegments: () => void;
+  isDirty: boolean;
 }
 
 export const SegmentsTab: React.FC<SegmentsTabProps> = ({
@@ -31,7 +33,23 @@ export const SegmentsTab: React.FC<SegmentsTabProps> = ({
   onMergeWithNext,
   onSaveSegments,
   onApproveSegments,
+  isDirty,
 }) => {
+  const confirm = useConfirm();
+
+  const handleDelete = async (index: number): Promise<void> => {
+    const segment = segments[index];
+    const confirmed = await confirm({
+      title: 'Delete segment?',
+      description: `Delete segment ${segment?.order ?? index + 1}? This removes its text and any generated audio once you save.`,
+      confirmLabel: 'Delete',
+      danger: true,
+    });
+    if (confirmed) {
+      onDeleteSegment(index);
+    }
+  };
+
   return (
     <section className="panel form">
       <div className="page-header">
@@ -43,10 +61,14 @@ export const SegmentsTab: React.FC<SegmentsTabProps> = ({
             inline cues in the text: [cười] [thở dài] [hắng giọng].
           </p>
         </div>
-        <button className="button secondary" type="button" onClick={onAddSegment}>
-          Add segment
-        </button>
+        <div className="button-row">
+          {isDirty ? <span className="badge unsaved">Unsaved changes</span> : null}
+          <button className="button secondary" type="button" onClick={onAddSegment}>
+            Add segment
+          </button>
+        </div>
       </div>
+      <div className="table-wrap">
       <table className="table">
         <thead>
           <tr>
@@ -111,7 +133,7 @@ export const SegmentsTab: React.FC<SegmentsTabProps> = ({
                   <button className="button secondary" type="button" onClick={() => onMergeWithNext(index)}>
                     Merge
                   </button>
-                  <button className="button danger" type="button" onClick={() => onDeleteSegment(index)}>
+                  <button className="button danger" type="button" onClick={() => void handleDelete(index)}>
                     <Trash2 size={15} aria-hidden="true" />
                   </button>
                 </div>
@@ -120,6 +142,7 @@ export const SegmentsTab: React.FC<SegmentsTabProps> = ({
           ))}
         </tbody>
       </table>
+      </div>
       <div className="button-row">
         <button className="button secondary" type="button" onClick={onSaveSegments} disabled={isBusy}>
           <Save size={16} aria-hidden="true" />

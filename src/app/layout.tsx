@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import 'react-toastify/dist/ReactToastify.css';
 import './globals.css';
 
+import { ConfirmProvider } from '@/components/ConfirmDialog';
 import { ToastProvider } from '@/components/ToastProvider';
 
 export const metadata: Metadata = {
@@ -17,7 +18,7 @@ export default function RootLayout({ children }: RootLayoutProps): React.ReactEl
   return (
     <html lang="en">
       <body>
-        {children}
+        <ConfirmProvider>{children}</ConfirmProvider>
         <ToastProvider />
       </body>
     </html>

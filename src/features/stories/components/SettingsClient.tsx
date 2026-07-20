@@ -5,6 +5,7 @@ import { Mic, Play, RefreshCw, Trash2, Upload } from 'lucide-react';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
 
+import { useConfirm } from '@/components/ConfirmDialog';
 import { storiesApi, type VoiceOption } from '@/features/stories/api/storiesApi';
 import { AppShell } from '@/features/stories/components/AppShell';
 
@@ -36,6 +37,7 @@ export const SettingsClient: React.FC = () => {
   const [selectedDevice, setSelectedDevice] = useState<string>('auto');
   const [selectedVerificationEnabled, setSelectedVerificationEnabled] = useState<boolean>(true);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const confirm = useConfirm();
 
   const refresh = useCallback(async (): Promise<void> => {
     try {
@@ -179,6 +181,21 @@ export const SettingsClient: React.FC = () => {
       }
     },
     [refresh],
+  );
+
+  const confirmDeleteVoice = useCallback(
+    async (voiceId: string): Promise<void> => {
+      const confirmed = await confirm({
+        title: 'Delete voice?',
+        description: `Delete voice "${voiceId}"? Any character currently assigned to it will lose its voice.`,
+        confirmLabel: 'Delete',
+        danger: true,
+      });
+      if (confirmed) {
+        await deleteVoice(voiceId);
+      }
+    },
+    [confirm, deleteVoice],
   );
 
   return (
@@ -337,6 +354,7 @@ export const SettingsClient: React.FC = () => {
 
         <section className="panel">
           <h2>Voices ({voices.length})</h2>
+          <div className="table-wrap">
           <table className="table">
             <thead>
               <tr>
@@ -382,7 +400,7 @@ export const SettingsClient: React.FC = () => {
                         className="button danger"
                         type="button"
                         disabled={isBusy}
-                        onClick={() => void deleteVoice(voice.id)}
+                        onClick={() => void confirmDeleteVoice(voice.id)}
                       >
                         <Trash2 size={15} aria-hidden="true" />
                       </button>
@@ -392,6 +410,7 @@ export const SettingsClient: React.FC = () => {
               ))}
             </tbody>
           </table>
+          </div>
         </section>
       </main>
     </AppShell>
