@@ -74,15 +74,24 @@ export const storiesApi = {
     });
   },
 
-  async saveCharacters(slug: string, characters: CharactersFile): Promise<CharactersFile> {
-    return requestJson<CharactersFile>(`/api/stories/${slug}/characters`, {
-      method: 'PUT',
-      body: JSON.stringify(characters),
-    });
+  async saveCharacters(
+    slug: string,
+    characters: CharactersFile,
+  ): Promise<CharactersFile & { droppedCount: number }> {
+    return requestJson<CharactersFile & { droppedCount: number }>(
+      `/api/stories/${slug}/characters`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(characters),
+      },
+    );
   },
 
-  async saveSegments(slug: string, segments: SegmentsFile): Promise<SegmentsFile> {
-    return requestJson<SegmentsFile>(`/api/stories/${slug}/segments`, {
+  async saveSegments(
+    slug: string,
+    segments: SegmentsFile,
+  ): Promise<SegmentsFile & { droppedCount: number }> {
+    return requestJson<SegmentsFile & { droppedCount: number }>(`/api/stories/${slug}/segments`, {
       method: 'PUT',
       body: JSON.stringify(segments),
     });
@@ -104,6 +113,13 @@ export const storiesApi = {
     const data = await requestJson<{ job: JobRecord }>(`/api/stories/${slug}/jobs`, {
       method: 'POST',
       body: JSON.stringify({ type, segmentIds }),
+    });
+    return data.job;
+  },
+
+  async stopJob(slug: string): Promise<JobRecord> {
+    const data = await requestJson<{ job: JobRecord }>(`/api/stories/${slug}/jobs/stop`, {
+      method: 'POST',
     });
     return data.job;
   },

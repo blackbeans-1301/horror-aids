@@ -66,8 +66,26 @@ export const SegmentsTab: React.FC<SegmentsTabProps> = ({
           <button className="button secondary" type="button" onClick={onAddSegment}>
             Add segment
           </button>
+          <button className="button secondary" type="button" onClick={onSaveSegments} disabled={isBusy}>
+            <Save size={16} aria-hidden="true" />
+            Save segments
+          </button>
+          <button
+            className="button"
+            type="button"
+            onClick={onApproveSegments}
+            disabled={isBusy || segments.length === 0 || !voicesReady}
+          >
+            <Check size={16} aria-hidden="true" />
+            Accept segments for TTS
+          </button>
         </div>
       </div>
+      {segments.length > 0 && !voicesReady ? (
+        <p className="label">
+          Disabled because some speakers have no voice yet. Assign an OmniVoice voice to every used speaker in the Characters tab, then save.
+        </p>
+      ) : null}
       <div className="table-wrap">
       <table className="table">
         <thead>
@@ -143,26 +161,6 @@ export const SegmentsTab: React.FC<SegmentsTabProps> = ({
         </tbody>
       </table>
       </div>
-      <div className="button-row">
-        <button className="button secondary" type="button" onClick={onSaveSegments} disabled={isBusy}>
-          <Save size={16} aria-hidden="true" />
-          Save segments
-        </button>
-        <button
-          className="button"
-          type="button"
-          onClick={onApproveSegments}
-          disabled={isBusy || segments.length === 0 || !voicesReady}
-        >
-          <Check size={16} aria-hidden="true" />
-          Accept segments for TTS
-        </button>
-      </div>
-      {segments.length > 0 && !voicesReady ? (
-        <p className="label">
-          Disabled because some speakers have no voice yet. Assign an OmniVoice voice to every used speaker in the Characters tab, then save.
-        </p>
-      ) : null}
     </section>
   );
 };

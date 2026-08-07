@@ -140,5 +140,8 @@ export async function PUT(
     audio: { ...story.audio, status: 'pending' },
   }));
 
-  return NextResponse.json(updated);
+  const inputCount = Array.isArray(body.segments) ? body.segments.length : 0;
+  const droppedCount = Math.max(0, inputCount - segments.length);
+
+  return NextResponse.json({ ...updated, droppedCount });
 }

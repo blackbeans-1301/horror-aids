@@ -1,7 +1,13 @@
 {
   "omnivoice": {
-    "model": "k2-fsa/OmniVoice",
-    "device": "auto"
+    "model": "Serveurperso/OmniVoice-GGUF-BF16",
+    "device": "auto",
+    "gguf": {
+      "binary": "workers/omnivoice.cpp/build/omnivoice-tts",
+      "modelPath": "data/models/omnivoice-gguf/omnivoice-base-BF16.gguf",
+      "codecPath": "data/models/omnivoice-gguf/omnivoice-tokenizer-BF16.gguf",
+      "steps": 32
+    }
   },
   "whisper": {
     "enabled": false,
@@ -9,6 +15,9 @@
     "language": "vi",
     "minTextRatio": 0.6,
     "maxAttempts": 3
+  },
+  "segmentation": {
+    "charactersEnabled": false
   },
   "audio": {
     "sampleRate": 22050,

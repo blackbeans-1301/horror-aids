@@ -69,9 +69,9 @@ export const StoryPlayer: React.FC<StoryPlayerProps> = ({
             <>
               <p className="label">
                 Playing {(playerIndex ?? 0) + 1}/{playableSegments.length} — segment {playingSegment.id} [
-                {playingSegment.speakerId}]: {playingSegment.text.slice(0, 120)}
-                {playingSegment.text.length > 120 ? '…' : ''}
+                {playingSegment.speakerId}]
               </p>
+              <p className="player-transcript">{playingSegment.text}</p>
               <audio
                 autoPlay
                 controls

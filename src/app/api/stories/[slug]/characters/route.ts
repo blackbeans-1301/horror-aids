@@ -72,5 +72,8 @@ export async function PUT(
   }
 
   const updated = await writeCharacters(slug, { characters });
-  return NextResponse.json(updated);
+  const inputCount = Array.isArray(body.characters) ? body.characters.length : 0;
+  const droppedCount = Math.max(0, inputCount - characters.length);
+
+  return NextResponse.json({ ...updated, droppedCount });
 }

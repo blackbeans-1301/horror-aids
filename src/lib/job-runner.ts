@@ -107,60 +107,80 @@ async function assertCanStartJob(
   }
 }
 
+// assertCanStartJob's read-jobs check and startStoryJob's write-jobs commit
+// are separated by several awaits; without this, two near-simultaneous
+// requests for the same story (double-click, client retry) can both pass
+// the check before either commits, spawning two workers against the same
+// story. Synchronous Set.has/add around the whole check-then-commit section
+// closes that gap — no await separates them from the caller's perspective.
+const startingJobs = new Set<string>();
+
 export async function startStoryJob(
   storyId: string,
   type: JobType,
   options?: { segmentIds?: string[] },
 ): Promise<JobRecord> {
-  const segmentIds = type === 'generate_verify_tts' ? options?.segmentIds : undefined;
-  await assertCanStartJob(storyId, type, segmentIds);
-
-  const jobId = createJobId();
-  const logPath = `logs/${jobId}.log`;
-  const resultPath = `tmp/${jobId}.result.json`;
-  const scriptPath = path.join(workersRoot, workerScripts[type]);
-  const command = [
-    pythonExecutable(),
-    scriptPath,
-    '--story',
-    path.join('stories', storyId),
-    '--job-id',
-    jobId,
-    '--config',
-    path.join(configRoot, 'app.json'),
-  ];
-  if (segmentIds?.length) {
-    command.push('--segments', segmentIds.join(','));
+  if (startingJobs.has(storyId)) {
+    throw new Error(`Story already has a job start in progress`);
   }
-  const now = new Date().toISOString();
+  startingJobs.add(storyId);
 
-  const job: JobRecord = {
-    id: jobId,
-    storyId,
-    type,
-    status: 'running',
-    pid: null,
-    startedAt: now,
-    finishedAt: null,
-    logPath: `stories/${storyId}/${logPath}`,
-    resultPath: `stories/${storyId}/${resultPath}`,
-    command,
-    error: null,
-  };
+  let job: JobRecord;
+  try {
+    const segmentIds = type === 'generate_verify_tts' ? options?.segmentIds : undefined;
+    await assertCanStartJob(storyId, type, segmentIds);
 
-  const jobs = await readJobs();
-  await writeJobs({ jobs: [job, ...jobs.jobs] });
-
-  await patchStory(storyId, (story) => {
-    if (type === 'process_story') {
-      return { ...story, status: 'processed' };
+    const jobId = createJobId();
+    const logPath = `logs/${jobId}.log`;
+    const resultPath = `tmp/${jobId}.result.json`;
+    const scriptPath = path.join(workersRoot, workerScripts[type]);
+    const command = [
+      pythonExecutable(),
+      scriptPath,
+      '--story',
+      path.join('stories', storyId),
+      '--job-id',
+      jobId,
+      '--config',
+      path.join(configRoot, 'app.json'),
+    ];
+    if (segmentIds?.length) {
+      command.push('--segments', segmentIds.join(','));
     }
-    if (type === 'generate_verify_tts') {
-      return { ...story, status: 'tts_running', audio: { ...story.audio, status: 'running' } };
-    }
-    return story;
-  });
+    const now = new Date().toISOString();
 
+    job = {
+      id: jobId,
+      storyId,
+      type,
+      status: 'running',
+      pid: null,
+      startedAt: now,
+      finishedAt: null,
+      logPath: `stories/${storyId}/${logPath}`,
+      resultPath: `stories/${storyId}/${resultPath}`,
+      command,
+      error: null,
+    };
+
+    const jobs = await readJobs();
+    await writeJobs({ jobs: [job, ...jobs.jobs] });
+
+    await patchStory(storyId, (story) => {
+      if (type === 'process_story') {
+        return { ...story, status: 'processed' };
+      }
+      if (type === 'generate_verify_tts') {
+        return { ...story, status: 'tts_running', audio: { ...story.audio, status: 'running' } };
+      }
+      return story;
+    });
+  } finally {
+    startingJobs.delete(storyId);
+  }
+
+  const command = job.command;
+  const jobId = job.id;
   const child = spawn(command[0], command.slice(1), {
     cwd: process.cwd(),
     env: process.env,
@@ -170,9 +190,13 @@ export async function startStoryJob(
 
   await updateJob(jobId, { pid: child.pid ?? null });
 
-  child.on('exit', (code) => {
+  child.on('exit', (code, signal) => {
     void (async (): Promise<void> => {
-      const status = jobStatusFromExitCode(code);
+      // A signal (from stopStoryJob, or an OS-level kill) always means the
+      // job was interrupted rather than failing on its own — even for
+      // workers like process_story/concat_audio that don't opt into a
+      // graceful STOPPED_EXIT_CODE shutdown.
+      const status = signal ? 'cancelled' : jobStatusFromExitCode(code);
       await updateJob(jobId, {
         status,
         finishedAt: new Date().toISOString(),
@@ -190,6 +214,29 @@ export async function startStoryJob(
   });
 
   return { ...job, pid: child.pid ?? null };
+}
+
+export async function stopStoryJob(storyId: string): Promise<JobRecord> {
+  const jobs = await readJobs();
+  const active = jobs.jobs.find((job) => job.storyId === storyId && isRunning(job));
+  if (!active) {
+    throw new Error('No active job to stop');
+  }
+  if (active.pid == null) {
+    throw new Error('Job has no process id yet; try again in a moment');
+  }
+
+  try {
+    process.kill(active.pid, 'SIGTERM');
+  } catch (error) {
+    // ESRCH means the process already exited; the job's own exit handler
+    // will have recorded its final status.
+    if ((error as NodeJS.ErrnoException).code !== 'ESRCH') {
+      throw error;
+    }
+  }
+
+  return active;
 }
 
 export async function readJobLog(storyId: string, logPathFromJob: string): Promise<string> {

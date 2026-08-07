@@ -22,11 +22,19 @@ export async function GET(
     return NextResponse.json({ error: 'Only audio assets can be served' }, { status: 400 });
   }
 
-  const asset = await getAsset(slug, relativePath);
-  return new NextResponse(new Uint8Array(asset.data), {
-    headers: {
-      'content-type': asset.contentType,
-      'cache-control': 'no-store',
-    },
-  });
+  try {
+    const asset = await getAsset(slug, relativePath);
+    return new NextResponse(new Uint8Array(asset.data), {
+      headers: {
+        'content-type': asset.contentType,
+        'cache-control': 'no-store',
+      },
+    });
+  } catch (error) {
+    const status = (error as NodeJS.ErrnoException).code === 'ENOENT' ? 404 : 400;
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'Could not read asset' },
+      { status },
+    );
+  }
 }

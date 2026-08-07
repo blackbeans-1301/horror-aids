@@ -128,7 +128,7 @@ Rules:
 - No API key or network call — OmniVoice is a local Python model loaded from `workers/.venv`.
 - Generate one audio file per segment.
 - Skip segments marked `skipped`.
-- A full (non-targeted) "Generate + verify" run currently re-processes every non-skipped segment, including ones already `complete`/`passed` — regeneration is not yet scoped to only failed/targeted segments outside of an explicit `--segments` regenerate request. Treat "do not overwrite completed/verified audio" as true only for targeted regeneration, not a full run.
+- A full (non-targeted) "Generate + verify" run resumes rather than restarts: segments already `complete`/`passed` are left untouched, and only pending/failed segments are (re)processed. Use an explicit `--segments` regenerate request to force a specific segment even if it already passed.
 - Log model repo/device/voice ID/segment ID — there is no secret to withhold.
 - `HORROR_AIDS_FAKE_TTS=1` (or unset, since it defaults on) generates a placeholder tone WAV instead of running the real model, for fast local development without downloading weights.
 

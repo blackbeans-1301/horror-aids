@@ -1,6 +1,6 @@
 'use client';
 
-import { Loader2 } from 'lucide-react';
+import { Loader2, Square } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
 
 import type { JobRecord, JobType } from '@/types/story';
@@ -8,6 +8,8 @@ import type { JobRecord, JobType } from '@/types/story';
 interface ActiveJobBannerProps {
   job: JobRecord;
   onViewLog: () => void;
+  onStop: () => void;
+  isStopping: boolean;
 }
 
 const jobLabels: Record<JobType, string> = {
@@ -23,7 +25,12 @@ function formatElapsed(startedAt: string): string {
   return minutes > 0 ? `${minutes}m ${remainder}s` : `${remainder}s`;
 }
 
-export const ActiveJobBanner: React.FC<ActiveJobBannerProps> = ({ job, onViewLog }) => {
+export const ActiveJobBanner: React.FC<ActiveJobBannerProps> = ({
+  job,
+  onViewLog,
+  onStop,
+  isStopping,
+}) => {
   const [, forceTick] = useState(0);
 
   useEffect(() => {
@@ -39,6 +46,10 @@ export const ActiveJobBanner: React.FC<ActiveJobBannerProps> = ({ job, onViewLog
       </span>
       <button className="button secondary" type="button" onClick={onViewLog}>
         View log
+      </button>
+      <button className="button danger" type="button" onClick={onStop} disabled={isStopping}>
+        <Square size={14} aria-hidden="true" />
+        {isStopping ? 'Stopping…' : 'Stop'}
       </button>
     </div>
   );

@@ -96,6 +96,8 @@ export const CharactersTab: React.FC<CharactersTabProps> = ({
                   className="select"
                   value={character.role}
                   onChange={(event) => onUpdateCharacter(index, { role: event.target.value as CharacterRole })}
+                  disabled={character.role === 'narrator'}
+                  title={character.role === 'narrator' ? 'The narrator role cannot be changed' : undefined}
                 >
                   {roleOptions.map((role) => (
                     <option key={role} value={role}>

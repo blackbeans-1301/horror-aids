@@ -9,10 +9,16 @@ import path from 'node:path';
 import { NextResponse } from 'next/server';
 
 import { readJsonFile, readVoices } from '@/lib/json-store';
-import { configRoot, projectRoot, pythonExecutable, workersRoot } from '@/lib/paths';
+import { configRoot, projectRoot, pythonExecutable, voicePreviewCacheRoot, workersRoot } from '@/lib/paths';
 
 const SAMPLE_TEXT =
   'Đêm đó, trời mưa tầm tã. Tiếng gõ cửa vang lên từ căn nhà hoang cuối ngõ.';
+
+function previewCachePath(voiceId: string, model: string, device: string): string {
+  const safeModel = model.replace(/[^a-zA-Z0-9_-]+/g, '_');
+  const safeDevice = device.replace(/[^a-zA-Z0-9_-]+/g, '_');
+  return path.join(voicePreviewCacheRoot, `${voiceId}__${safeModel}__${safeDevice}.wav`);
+}
 
 interface OmnivoiceAppConfig {
   omnivoice?: { model?: string; device?: string };
@@ -53,6 +59,14 @@ export async function GET(request: Request): Promise<NextResponse> {
   const model = process.env.OMNIVOICE_MODEL || config.omnivoice?.model || 'k2-fsa/OmniVoice';
   const device = process.env.OMNIVOICE_DEVICE || config.omnivoice?.device || 'auto';
 
+  const cachePath = previewCachePath(voiceId, model, device);
+  const cached = await fs.readFile(cachePath).catch(() => null);
+  if (cached) {
+    return new NextResponse(cached, {
+      headers: { 'content-type': 'audio/wav', 'cache-control': 'no-store' },
+    });
+  }
+
   const outputPath = path.join(os.tmpdir(), `horror-aids-preview-${randomUUID()}.wav`);
   const scriptPath = path.join(workersRoot, 'preview_voice.py');
 
@@ -69,8 +83,12 @@ export async function GET(request: Request): Promise<NextResponse> {
       model,
       '--device',
       device,
+      '--config',
+      path.join(configRoot, 'app.json'),
     ]);
     const audio = await fs.readFile(outputPath);
+    await fs.mkdir(voicePreviewCacheRoot, { recursive: true });
+    await fs.writeFile(cachePath, audio);
     return new NextResponse(audio, {
       headers: { 'content-type': 'audio/wav', 'cache-control': 'no-store' },
     });

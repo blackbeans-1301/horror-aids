@@ -110,7 +110,10 @@ def main() -> int:
     if not output_path.exists() or output_path.stat().st_size == 0:
         raise RuntimeError("final wav was not created")
 
-    story["status"] = "audio_validation"
+    # Leave story["status"] as "ready_to_concat" — there's no status value for
+    # "concat done, awaiting final approval", and setting it back to
+    # "audio_validation" (which elsewhere means "segments still unresolved")
+    # would move the visible badge backward past a stage already completed.
     story["audio"]["status"] = "complete"
     story["approvals"]["finalAudio"] = {"status": "pending", "approvedAt": None}
     ctx.write_story(story)

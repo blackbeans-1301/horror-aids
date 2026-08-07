@@ -2,12 +2,13 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Archive, FilePlus2, RefreshCw } from 'lucide-react';
-import React, { useCallback, useEffect, useState } from 'react';
+import { Archive, FilePlus2, FileUp, RefreshCw } from 'lucide-react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
 
 import { storiesApi } from '@/features/stories/api/storiesApi';
 import { AppShell } from '@/features/stories/components/AppShell';
+import { readStoryFilesAsText } from '@/features/stories/utils/readStoryFiles';
 import type { StoryIndexEntry } from '@/types/story';
 
 export const DashboardClient: React.FC = () => {
@@ -18,6 +19,7 @@ export const DashboardClient: React.FC = () => {
   const [message, setMessage] = useState<string>('Loading stories...');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [showArchived, setShowArchived] = useState<boolean>(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const loadStories = useCallback(async (): Promise<void> => {
     try {
@@ -68,6 +70,16 @@ export const DashboardClient: React.FC = () => {
     [router, storyText, title],
   );
 
+  const handleUploadFiles = useCallback(async (event: React.ChangeEvent<HTMLInputElement>): Promise<void> => {
+    const files = event.target.files;
+    if (!files || files.length === 0) {
+      return;
+    }
+    const text = await readStoryFilesAsText(files);
+    setStoryText(text);
+    event.target.value = '';
+  }, []);
+
   const visibleStories = stories.filter((story) => story.archived === showArchived);
 
   return (
@@ -86,6 +98,12 @@ export const DashboardClient: React.FC = () => {
             <RefreshCw size={16} aria-hidden="true" />
             Refresh
           </button>
+        </div>
+
+        <div className="waveform-divider" aria-hidden="true">
+          {Array.from({ length: 12 }).map((_, index) => (
+            <span key={index} />
+          ))}
         </div>
 
         <section className="grid">
@@ -109,10 +127,29 @@ export const DashboardClient: React.FC = () => {
                 placeholder="Paste or write the opening draft here. You can continue editing inside the workspace."
               />
             </label>
-            <button className="button" type="submit" disabled={isSubmitting}>
-              <FilePlus2 size={16} aria-hidden="true" />
-              Create workspace
-            </button>
+            <div className="button-row">
+              <button className="button" type="submit" disabled={isSubmitting}>
+                <FilePlus2 size={16} aria-hidden="true" />
+                Create workspace
+              </button>
+              <button
+                className="button secondary"
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isSubmitting}
+              >
+                <FileUp size={16} aria-hidden="true" />
+                Upload markdown
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".md,text/markdown"
+                multiple
+                hidden
+                onChange={(event) => void handleUploadFiles(event)}
+              />
+            </div>
             {message ? <p>{message}</p> : null}
           </form>
 
@@ -144,7 +181,7 @@ export const DashboardClient: React.FC = () => {
             </div>
             <div className="story-list">
               {visibleStories.map((story) => (
-                <div className="story-item" key={story.id}>
+                <div className={`story-item${story.archived ? ' archived' : ''}`} key={story.id}>
                   <Link href={`/stories/${story.id}`}>
                     <div className="status-line">
                       <strong>{story.title}</strong>
@@ -154,7 +191,7 @@ export const DashboardClient: React.FC = () => {
                     <span className="label">Updated {new Date(story.updatedAt).toLocaleString()}</span>
                   </Link>
                   <button
-                    className="button secondary"
+                    className="button secondary small"
                     type="button"
                     onClick={() => void handleToggleArchive(story)}
                   >
@@ -164,7 +201,7 @@ export const DashboardClient: React.FC = () => {
                 </div>
               ))}
               {visibleStories.length === 0 ? (
-                <div className="story-item">
+                <div className="story-item empty">
                   <Archive size={18} aria-hidden="true" />
                   <p>
                     {showArchived

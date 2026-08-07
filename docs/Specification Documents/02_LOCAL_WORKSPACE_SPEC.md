@@ -1,5 +1,11 @@
 # Local Workspace Specification
 
+> Partially superseded by `09_WORKSPACE_ISOLATION_SPEC.md` (proposed 2026-08-01): the Root Layout and
+> Archive/Delete sections below describe in-repo `data/`+`stories/` roots and direct deletes, both of
+> which `09` replaces with per-environment content roots outside the repository and a no-hard-delete
+> rule. Story-folder layout, naming rules, JSON schemas, status values, and validation rules in this
+> document remain authoritative.
+
 ## Principle
 
 One story equals one self-contained audio production workspace.

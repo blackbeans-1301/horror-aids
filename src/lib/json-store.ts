@@ -9,6 +9,7 @@ import {
   slugify,
   storiesRoot,
   storyDir,
+  voicePreviewCacheRoot,
 } from '@/lib/paths';
 import type {
   ApprovalStatus,
@@ -16,9 +17,12 @@ import type {
   JobRecord,
   JobsFile,
   JobStatus,
+  JobType,
+  JobTypeAnalytics,
   SegmentRecord,
   SegmentsFile,
   SourceType,
+  StoryAnalytics,
   StoryDetail,
   StoryIndex,
   StoryIndexEntry,
@@ -26,6 +30,57 @@ import type {
   VoiceRecord,
   VoicesFile,
 } from '@/types/story';
+
+const JOB_TYPES: JobType[] = ['process_story', 'generate_verify_tts', 'concat_audio'];
+
+function computeStoryAnalytics(story: StoryRecord, storyJobs: JobRecord[]): StoryAnalytics {
+  const jobs: JobTypeAnalytics[] = JOB_TYPES.map((type) => {
+    const runsOfType = storyJobs.filter((job) => job.type === type);
+    const completed = runsOfType.filter((job) => job.finishedAt !== null);
+    const totalDurationMs = completed.reduce(
+      (sum, job) => sum + (new Date(job.finishedAt as string).getTime() - new Date(job.startedAt).getTime()),
+      0,
+    );
+    const lastFinishedAt = completed
+      .map((job) => job.finishedAt as string)
+      .sort((a, b) => b.localeCompare(a))[0] ?? null;
+    return {
+      type,
+      runs: runsOfType.length,
+      completedRuns: completed.length,
+      totalDurationMs,
+      averageDurationMs: completed.length > 0 ? totalDurationMs / completed.length : null,
+      lastFinishedAt,
+    };
+  });
+
+  const segmentsApprovedAt = story.approvals.segments.approvedAt;
+  const verifiedAudioApprovedAt = story.approvals.verifiedAudio.approvedAt;
+  const finalAudioApprovedAt = story.approvals.finalAudio.approvedAt;
+  const createdMs = new Date(story.createdAt).getTime();
+
+  const msBetween = (from: string | null, to: string | null): number | null => {
+    if (!from || !to) {
+      return null;
+    }
+    return new Date(to).getTime() - new Date(from).getTime();
+  };
+
+  return {
+    createdAt: story.createdAt,
+    segmentsApprovedAt,
+    verifiedAudioApprovedAt,
+    finalAudioApprovedAt,
+    isComplete: finalAudioApprovedAt !== null,
+    totalDurationMs: (finalAudioApprovedAt ? new Date(finalAudioApprovedAt).getTime() : Date.now()) - createdMs,
+    phaseDurationsMs: {
+      draftToSegmentsApproved: msBetween(story.createdAt, segmentsApprovedAt),
+      segmentsApprovedToVerified: msBetween(segmentsApprovedAt, verifiedAudioApprovedAt),
+      verifiedToFinalApproved: msBetween(verifiedAudioApprovedAt, finalAudioApprovedAt),
+    },
+    jobs,
+  };
+}
 
 const indexPath = path.join(dataRoot, 'index.json');
 const jobsPath = path.join(dataRoot, 'jobs.json');
@@ -111,9 +166,70 @@ export async function writeStoryIndex(index: StoryIndex): Promise<void> {
   await writeJsonFile(indexPath, index);
 }
 
+function isProcessAlive(pid: number): boolean {
+  try {
+    // Signal 0 sends nothing; it only checks whether the pid exists and is
+    // ours to signal.
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== 'ESRCH';
+  }
+}
+
+const STALE_JOB_ERROR =
+  'Worker process is no longer running (its exit was never recorded — most likely the app ' +
+  'server restarted while the job was in progress).';
+
+// A "running" job whose pid is dead was orphaned by something outside this
+// app's control (a server restart losing the in-memory child handle, the
+// machine sleeping, a hard kill). Left alone it stays "running" forever —
+// blocking new jobs for that story and making Stop a no-op. Fix it the same
+// way a normal partial run would leave things: mark the job failed and
+// recompute the story's status from whatever segments actually finished.
+async function reconcileStoryAfterStaleJob(job: JobRecord): Promise<void> {
+  if (job.type !== 'generate_verify_tts') {
+    return;
+  }
+  const story = await readStory(job.storyId);
+  if (story.status !== 'tts_running' && story.audio.status !== 'running') {
+    return;
+  }
+  const segments = await readSegments(job.storyId);
+  const unresolved = segments.segments.filter(
+    (segment) => segment.status !== 'skipped' && segment.verification.status !== 'passed',
+  ).length;
+  await patchStory(job.storyId, (current) => ({
+    ...current,
+    status: unresolved === 0 ? 'tts_verified' : 'audio_validation',
+    audio: { ...current.audio, status: unresolved === 0 ? 'verified' : 'failed' },
+  }));
+}
+
+async function reconcileStaleJobs(jobs: JobsFile): Promise<JobsFile> {
+  const stale = jobs.jobs.filter(
+    (job) => job.status === 'running' && job.pid != null && !isProcessAlive(job.pid),
+  );
+  if (stale.length === 0) {
+    return jobs;
+  }
+
+  const staleIds = new Set(stale.map((job) => job.id));
+  const finishedAt = new Date().toISOString();
+  const reconciledJobs = jobs.jobs.map((job) =>
+    staleIds.has(job.id)
+      ? { ...job, status: 'failed' as JobStatus, finishedAt, error: STALE_JOB_ERROR }
+      : job,
+  );
+  await writeJobs({ jobs: reconciledJobs });
+  await Promise.all(stale.map((job) => reconcileStoryAfterStaleJob(job)));
+  return { jobs: reconciledJobs };
+}
+
 export async function readJobs(): Promise<JobsFile> {
   await ensureDataFiles();
-  return readJsonFile<JobsFile>(jobsPath, { jobs: [] });
+  const jobs = await readJsonFile<JobsFile>(jobsPath, { jobs: [] });
+  return reconcileStaleJobs(jobs);
 }
 
 export async function writeJobs(jobs: JobsFile): Promise<void> {
@@ -220,10 +336,10 @@ export async function createStory(input: {
 }
 
 export async function readStory(slug: string): Promise<StoryRecord> {
-  const story = await readJsonFile<StoryRecord>(
-    resolveStoryPath(slug, 'story.json'),
-    null as unknown as StoryRecord,
-  );
+  const story = await readJsonFile<StoryRecord | null>(resolveStoryPath(slug, 'story.json'), null);
+  if (!story) {
+    throw new Error(`Story not found: ${slug}`);
+  }
   // Stories created before the archive feature shipped have no archived/archivedAt fields on disk.
   return { ...story, archived: story.archived ?? false, archivedAt: story.archivedAt ?? null };
 }
@@ -370,6 +486,7 @@ export async function getStoryDetail(slug: string): Promise<StoryDetail> {
     activeJob,
     recentJobs: storyJobs.slice(0, 8),
     finalAudioExists,
+    analytics: computeStoryAnalytics(story, storyJobs),
   };
 }
 
@@ -394,6 +511,15 @@ export async function getAsset(slug: string, relativePath: string): Promise<{
   contentType: string;
 }> {
   const resolved = resolveStoryPath(slug, relativePath);
+  // resolveStoryPath only guards against escaping the story folder root; this
+  // route is documented as audio-only, so also confirm the resolved path is
+  // actually inside audio/ — a raw string check like relativePath.startsWith
+  // ('audio/') passes for "audio/../story.json" (still inside the story
+  // root, but no longer inside audio/).
+  const audioRoot = path.join(storyDir(slug), 'audio');
+  if (resolved !== audioRoot && !resolved.startsWith(`${audioRoot}${path.sep}`)) {
+    throw new Error('Only audio assets can be served');
+  }
   const data = await fs.readFile(resolved);
   const extension = path.extname(resolved).toLowerCase();
   const contentType = extension === '.wav' ? 'audio/wav' : 'application/octet-stream';
@@ -455,12 +581,39 @@ export async function deleteVoice(id: string): Promise<void> {
       throw error;
     }
   }
+
+  const cachedPreviews = await fs.readdir(voicePreviewCacheRoot).catch(() => []);
+  await Promise.all(
+    cachedPreviews
+      .filter((entry) => entry.startsWith(`${id}__`))
+      .map((entry) => fs.unlink(path.join(voicePreviewCacheRoot, entry)).catch(() => undefined)),
+  );
 }
 
 export function isRunning(job: JobRecord): boolean {
   return job.status === 'running' || job.status === 'pending';
 }
 
+// Exit code a worker returns after a cooperative stop (see
+// STOPPED_EXIT_CODE in workers/common.py) — distinguishes a user-requested
+// stop from a crash so the job shows "cancelled" instead of "failed".
+const CANCELLED_EXIT_CODE = 75;
+
+// Matches NEEDS_REVIEW_EXIT_CODE in workers/common.py — a run that finished
+// without crashing but left some segments unresolved. Kept distinct from the
+// exit code 1 an uncaught exception produces, so a partial success doesn't
+// look identical to a crash.
+const NEEDS_REVIEW_EXIT_CODE = 2;
+
 export function jobStatusFromExitCode(code: number | null): JobStatus {
-  return code === 0 ? 'complete' : 'failed';
+  if (code === 0) {
+    return 'complete';
+  }
+  if (code === CANCELLED_EXIT_CODE) {
+    return 'cancelled';
+  }
+  if (code === NEEDS_REVIEW_EXIT_CODE) {
+    return 'needs_review';
+  }
+  return 'failed';
 }

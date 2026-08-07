@@ -1,9 +1,48 @@
 import { AudioLines, Check, Download, Play, RefreshCw } from 'lucide-react';
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 
 import { StoryPlayer } from '@/features/stories/components/workspace/StoryPlayer';
 import { assetUrl, segmentAudioPath } from '@/features/stories/utils/asset';
+import { formatClockDuration } from '@/features/stories/utils/format';
 import type { JobType, SegmentRecord } from '@/types/story';
+
+const AudioDurationCell: React.FC<{ src: string }> = ({ src }) => {
+  const [duration, setDuration] = useState<number | null>(null);
+
+  useEffect(() => {
+    setDuration(null);
+    const audio = new Audio(src);
+    // Some WAV encoders leave the RIFF size field as a streaming placeholder,
+    // so Chrome reports duration as Infinity until it seeks to the end —
+    // force that seek, then jump back to 0 once the real duration is known.
+    const handleDurationUpdate = (): void => {
+      if (Number.isFinite(audio.duration)) {
+        setDuration(audio.duration);
+        return;
+      }
+      audio.currentTime = Number.MAX_SAFE_INTEGER;
+    };
+    const handleTimeUpdate = (): void => {
+      if (Number.isFinite(audio.duration)) {
+        setDuration(audio.duration);
+      }
+      audio.currentTime = 0;
+    };
+    audio.addEventListener('loadedmetadata', handleDurationUpdate);
+    audio.addEventListener('durationchange', handleDurationUpdate);
+    audio.addEventListener('timeupdate', handleTimeUpdate);
+    return () => {
+      audio.removeEventListener('loadedmetadata', handleDurationUpdate);
+      audio.removeEventListener('durationchange', handleDurationUpdate);
+      audio.removeEventListener('timeupdate', handleTimeUpdate);
+    };
+  }, [src]);
+
+  if (duration === null) {
+    return <span className="label">…</span>;
+  }
+  return <span className="mono">{formatClockDuration(duration)}</span>;
+};
 
 interface AudioTabProps {
   slug: string;
@@ -53,9 +92,26 @@ export const AudioTab: React.FC<AudioTabProps> = ({
       <div className="page-header">
         <div>
           <h2>Audio Verification</h2>
-          <p>Generate TTS, inspect Whisper transcripts, confirm verified output, then concat.</p>
+          <p>Generate TTS, confirm verified output, then concat.</p>
         </div>
       </div>
+      <div className="panel">
+        <h3>Final WAV</h3>
+        {finalAudioExists ? (
+          <>
+            <audio controls src={assetUrl(slug, finalAudioPath)} />
+            <div className="button-row">
+              <a className="button secondary" href={assetUrl(slug, finalAudioPath)} download={`${slug}-final.wav`}>
+                <Download size={16} aria-hidden="true" />
+                Download final WAV
+              </a>
+            </div>
+          </>
+        ) : (
+          <p>Final audio will appear after concat.</p>
+        )}
+      </div>
+
       <div className="button-row">
         <button
           className="button secondary"
@@ -116,8 +172,7 @@ export const AudioTab: React.FC<AudioTabProps> = ({
             <th>ID</th>
             <th>Speaker</th>
             <th>Verification</th>
-            <th>Transcript</th>
-            <th>Audio</th>
+            <th>Duration</th>
             <th />
           </tr>
         </thead>
@@ -153,10 +208,9 @@ export const AudioTab: React.FC<AudioTabProps> = ({
                 </span>
                 <div className="label">attempts {segment.verification.attempts}</div>
               </td>
-              <td>{segment.verification.transcriptPreview || segment.verification.lastError || 'No transcript yet'}</td>
               <td>
                 {segment.status === 'complete' || segment.verification.status === 'passed' ? (
-                  <audio controls src={assetUrl(slug, segmentAudioPath(segment))} />
+                  <AudioDurationCell src={assetUrl(slug, segmentAudioPath(segment))} />
                 ) : (
                   <span className="label">No audio</span>
                 )}
@@ -190,22 +244,6 @@ export const AudioTab: React.FC<AudioTabProps> = ({
           ))}
         </tbody>
       </table>
-      </div>
-      <div className="panel">
-        <h3>Final WAV</h3>
-        {finalAudioExists ? (
-          <>
-            <audio controls src={assetUrl(slug, finalAudioPath)} />
-            <div className="button-row">
-              <a className="button secondary" href={assetUrl(slug, finalAudioPath)} download={`${slug}-final.wav`}>
-                <Download size={16} aria-hidden="true" />
-                Download final WAV
-              </a>
-            </div>
-          </>
-        ) : (
-          <p>Final audio will appear after concat.</p>
-        )}
       </div>
     </section>
   );

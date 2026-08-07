@@ -54,3 +54,6 @@ next-env.d.ts
 drizzle/relations.ts
 drizzle/schema.ts
 **/__pycache__/
+
+# native omnivoice.cpp checkout + build (built locally per-machine)
+/workers/omnivoice.cpp/

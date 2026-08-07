@@ -176,6 +176,30 @@ export interface VoicesFile {
   voices: VoiceRecord[];
 }
 
+export interface JobTypeAnalytics {
+  type: JobType;
+  runs: number;
+  completedRuns: number;
+  totalDurationMs: number;
+  averageDurationMs: number | null;
+  lastFinishedAt: string | null;
+}
+
+export interface StoryAnalytics {
+  createdAt: string;
+  segmentsApprovedAt: string | null;
+  verifiedAudioApprovedAt: string | null;
+  finalAudioApprovedAt: string | null;
+  totalDurationMs: number;
+  isComplete: boolean;
+  phaseDurationsMs: {
+    draftToSegmentsApproved: number | null;
+    segmentsApprovedToVerified: number | null;
+    verifiedToFinalApproved: number | null;
+  };
+  jobs: JobTypeAnalytics[];
+}
+
 export interface StoryDetail {
   story: StoryRecord;
   storyText: string;
@@ -184,4 +208,5 @@ export interface StoryDetail {
   activeJob: JobRecord | null;
   recentJobs: JobRecord[];
   finalAudioExists: boolean;
+  analytics: StoryAnalytics;
 }

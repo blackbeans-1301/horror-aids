@@ -6,6 +6,7 @@ export const dataRoot = path.join(projectRoot, 'data');
 export const storiesRoot = path.join(projectRoot, 'stories');
 export const workersRoot = path.join(projectRoot, 'workers');
 export const configRoot = path.join(projectRoot, 'config');
+export const voicePreviewCacheRoot = path.join(dataRoot, 'voice-preview-cache');
 
 // The omnivoice package (and its heavy ML deps) only lives in the workers'
 // virtualenv, not on the system PATH — worker scripts must run under it.

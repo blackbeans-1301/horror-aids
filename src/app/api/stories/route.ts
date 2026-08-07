@@ -14,6 +14,13 @@ export async function GET(): Promise<NextResponse> {
   return NextResponse.json({ stories });
 }
 
+const sourceTypes = new Set<SourceType>([
+  'manual',
+  'generated_later',
+  'reddit_reference_later',
+  'reddit_import_later',
+]);
+
 export async function POST(request: Request): Promise<NextResponse> {
   const body = (await request.json()) as CreateStoryPayload;
   const title = typeof body.title === 'string' ? body.title.trim() : '';
@@ -22,8 +29,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: 'Title is required' }, { status: 400 });
   }
 
-  const sourceType: SourceType =
-    body.sourceType === 'manual' ? 'manual' : 'manual';
+  const sourceType: SourceType = sourceTypes.has(body.sourceType as SourceType)
+    ? (body.sourceType as SourceType)
+    : 'manual';
   const storyText = typeof body.storyText === 'string' ? body.storyText : '';
   const story = await createStory({ title, sourceType, storyText });
 

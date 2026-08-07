@@ -9,12 +9,18 @@ from pathlib import Path
 from typing import Any
 
 from common import (
+    GGUF_MODEL_ID,
+    NEEDS_REVIEW_EXIT_CODE,
+    STOPPED_EXIT_CODE,
     atomic_write,
     env_bool,
     get_omnivoice_model,
+    install_stop_handler,
     load_context,
     make_fake_wav,
     resolve_voice_wav,
+    run_omnivoice_cpp,
+    stop_requested,
 )
 
 
@@ -32,13 +38,17 @@ def call_omnivoice(
         make_fake_wav(output_path, text, sample_rate)
         return
 
-    import soundfile as sf
-
     omnivoice_config = config.get("omnivoice", {})
     model_repo = os.getenv("OMNIVOICE_MODEL") or str(omnivoice_config.get("model") or "k2-fsa/OmniVoice")
-    device = os.getenv("OMNIVOICE_DEVICE") or str(omnivoice_config.get("device") or "auto")
     ref_audio = resolve_voice_wav(ctx.project_root, voice)
 
+    if model_repo == GGUF_MODEL_ID:
+        run_omnivoice_cpp(ctx.project_root, omnivoice_config.get("gguf", {}), text, ref_audio, output_path)
+        return
+
+    import soundfile as sf
+
+    device = os.getenv("OMNIVOICE_DEVICE") or str(omnivoice_config.get("device") or "auto")
     model = get_omnivoice_model(model_repo, device)
     audios = model.generate(text=text, language="vi", ref_audio=str(ref_audio))
     if not audios:
@@ -157,6 +167,7 @@ def passes_verification(transcript: str, source_text: str, min_ratio: float) -> 
 
 def main() -> int:
     ctx = load_context()
+    install_stop_handler()
     ctx.log("generate_verify_tts started")
     config = ctx.config()
     story = ctx.story()
@@ -169,7 +180,7 @@ def main() -> int:
     whisper_config = config.get("whisper", {})
     max_attempts = int(os.getenv("AUDIO_VERIFY_MAX_ATTEMPTS") or whisper_config.get("maxAttempts") or 3)
     min_ratio = float(os.getenv("AUDIO_VERIFY_MIN_TEXT_RATIO") or whisper_config.get("minTextRatio") or 0.6)
-    verify_enabled = env_bool("AUDIO_VERIFY_ENABLED", default=bool(whisper_config.get("enabled", True)))
+    verify_enabled = env_bool("AUDIO_VERIFY_ENABLED", default=bool(whisper_config.get("enabled", False)))
     if not verify_enabled:
         ctx.log("audio verification disabled; segments will be accepted right after generation")
 
@@ -191,6 +202,18 @@ def main() -> int:
             continue
 
         if target_ids and segment["id"] not in target_ids:
+            updated_segments.append(segment)
+            continue
+
+        # A full (non-targeted) run resumes rather than restarts: a segment
+        # already complete and passed from an earlier run (or one this run
+        # was stopped partway through) is left untouched. Use "Regenerate
+        # selected" for a specific segment to force it even if it passed.
+        if (
+            not target_ids
+            and segment.get("status") == "complete"
+            and segment.get("verification", {}).get("status") == "passed"
+        ):
             updated_segments.append(segment)
             continue
 
@@ -252,6 +275,14 @@ def main() -> int:
             ctx.log(f"segment {segment['id']} verification failed: {last_error}")
         return passed
 
+    def flush_segments() -> None:
+        # updated_segments holds every segment (processed or not) as a live
+        # reference, so writing it at any point is an accurate snapshot.
+        # Called after each segment instead of once at the end of main() so a
+        # hard kill (crash, OOM, the app server restarting) doesn't throw
+        # away completed segments whose audio is already sitting on disk.
+        ctx.write_json(story["text"]["segmentsPath"], {"segments": updated_segments})
+
     # Pass 1: generate every pending segment, then verify them all with a
     # single Whisper invocation (one model load instead of one per segment).
     retry_queue: list[tuple[dict[str, Any], dict[str, Any]]] = []
@@ -259,6 +290,9 @@ def main() -> int:
     batch_segments: list[tuple[dict[str, Any], dict[str, Any]]] = []
 
     for segment, character in pending:
+        if stop_requested():
+            ctx.log("stop requested; halting further generation for this run")
+            break
         attempts = int(segment.get("verification", {}).get("attempts") or 0)
         if attempts >= max_attempts:
             retry_queue.append((segment, character))
@@ -286,16 +320,18 @@ def main() -> int:
                 )
             )
             batch_segments.append((segment, character))
-        except (RuntimeError, OSError, ValueError) as exc:
+        except Exception as exc:  # noqa: BLE001 - one bad segment must not abort the whole run
             record_failure(segment, attempts + 1, str(exc))
             ctx.log(f"segment {segment['id']} failed attempt {attempts + 1}: {exc}")
             retry_queue.append((segment, character))
+        finally:
+            flush_segments()
 
     if batch_items:
         ctx.log(f"batch transcribing {len(batch_items)} segments with Whisper")
         try:
             transcripts = run_whisper_batch(ctx, batch_items, config)
-        except (RuntimeError, OSError) as exc:
+        except Exception as exc:  # noqa: BLE001 - fall back to per-segment retries either way
             ctx.log(f"batch Whisper failed, falling back to per-segment retries: {exc}")
             transcripts = {}
         for segment, character in batch_segments:
@@ -307,9 +343,13 @@ def main() -> int:
                 retry_queue.append((segment, character))
             elif not record_result(segment, attempts, transcript):
                 retry_queue.append((segment, character))
+        flush_segments()
 
     # Pass 2: per-segment retries for everything that failed the batch round.
     for segment, character in retry_queue:
+        if stop_requested():
+            ctx.log("stop requested; halting retries for this run")
+            break
         audio_path = ctx.resolve(segment["audioPath"])
         transcript_path = ctx.resolve(segment["whisperTranscriptPath"])
         passed = False
@@ -317,6 +357,9 @@ def main() -> int:
         attempts = int(segment.get("verification", {}).get("attempts") or 0)
 
         for attempt in range(attempts + 1, max_attempts + 1):
+            if stop_requested():
+                ctx.log(f"stop requested; halting retries for segment {segment['id']}")
+                break
             attempts = attempt
             try:
                 segment["status"] = "generating"
@@ -338,13 +381,17 @@ def main() -> int:
                     passed = True
                     break
                 last_error = segment["verification"]["lastError"]
-            except (RuntimeError, OSError, ValueError) as exc:
+            except Exception as exc:  # noqa: BLE001 - one bad segment must not abort the whole run
                 last_error = str(exc)
                 record_failure(segment, attempts, last_error)
                 ctx.log(f"segment {segment['id']} failed attempt {attempt}: {last_error}")
             time.sleep(0.05)
 
-        if not passed:
+        # A stop mid-retry leaves attempts short of max_attempts and whatever
+        # the last real attempt recorded is already the current state; don't
+        # overwrite it with "max_attempts_reached" — that's misleading, and
+        # the segment is still eligible to resume on the next run.
+        if not passed and not stop_requested():
             segment["status"] = "verification_failed"
             segment["verification"] = {
                 **segment.get("verification", {}),
@@ -352,6 +399,7 @@ def main() -> int:
                 "attempts": attempts,
                 "lastError": last_error or "Max attempts reached",
             }
+        flush_segments()
 
     # Story status reflects ALL segments, not only the ones processed in this
     # run — a targeted regenerate must not mark the story verified while other
@@ -379,14 +427,28 @@ def main() -> int:
     elif run_unresolved > 0:
         story["status"] = "audio_validation"
         story["audio"]["status"] = "failed"
+    if generated_count > 0 and story["approvals"]["verifiedAudio"]["status"] == "approved":
+        # Audio actually changed after a prior confirmation — concat must not
+        # run again on the strength of a now-stale approval.
+        story["approvals"]["verifiedAudio"] = {"status": "pending", "approvedAt": None}
+        ctx.log("verifiedAudio approval reset: audio was regenerated after confirmation")
     ctx.write_story(story)
+
+    if stop_requested():
+        ctx.result("cancelled", generated=generated_count, unresolved=unresolved, runUnresolved=run_unresolved)
+        ctx.log(
+            f"generate_verify_tts stopped by user: generated={generated_count}, "
+            f"run_unresolved={run_unresolved}, story_unresolved={unresolved}"
+        )
+        return STOPPED_EXIT_CODE
+
     result_status = "complete" if run_unresolved == 0 else "needs_review"
     ctx.result(result_status, generated=generated_count, unresolved=unresolved, runUnresolved=run_unresolved)
     ctx.log(
         f"generate_verify_tts finished: generated={generated_count}, "
         f"run_unresolved={run_unresolved}, story_unresolved={unresolved}"
     )
-    return 0 if run_unresolved == 0 else 1
+    return 0 if run_unresolved == 0 else NEEDS_REVIEW_EXIT_CODE
 
 
 if __name__ == "__main__":

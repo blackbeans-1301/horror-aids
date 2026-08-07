@@ -7,12 +7,32 @@ from typing import Any
 from common import load_context, slugify
 
 
-speaker_pattern = re.compile(r"^([A-ZÀ-Ỵa-zà-ỵ][A-ZÀ-Ỵa-zà-ỵ0-9 _-]{1,40})\s*:\s*(.+)$")
+# Curated Vietnamese letters rather than the raw À-Ỵ Unicode block (~7700
+# codepoints spanning Latin Extended-A/B and Latin Extended Additional),
+# which incidentally matches combining marks and other languages' letters.
+_VN_LOWER = (
+    "aàáảãạăằắẳẵặâầấẩẫậ"
+    "eèéẻẽẹêềếểễệ"
+    "iìíỉĩị"
+    "oòóỏõọôồốổỗộơờớởỡợ"
+    "uùúủũụưừứửữự"
+    "yỳýỷỹỵ"
+    "dđ"
+)
+_VN_LETTERS = _VN_LOWER + _VN_LOWER.upper()
+speaker_pattern = re.compile(
+    rf"^([A-Za-z{_VN_LETTERS}][A-Za-z0-9{_VN_LETTERS} _-]{{1,40}})\s*:\s*(.+)$"
+)
+
+
+_VILLAIN_TOKENS = ["villain", "ác", "quỷ", "ma"]
 
 
 def role_for_index(name: str, index: int) -> str:
     lowered = name.lower()
-    if any(token in lowered for token in ["villain", "ác", "quỷ", "ma"]):
+    # Whole-word match — a plain substring check misclassifies names like
+    # "Mai" (contains "ma") as villains.
+    if any(re.search(rf"\b{re.escape(token)}\b", lowered) for token in _VILLAIN_TOKENS):
         return "villain"
     if index == 0:
         return "main_character"
@@ -47,6 +67,8 @@ def main() -> int:
     story_text = ctx.read_text(story["text"]["storyPath"]).strip()
     if not story_text:
         raise ValueError("story text is empty")
+
+    characters_enabled = ctx.config().get("segmentation", {}).get("charactersEnabled", True)
 
     existing = ctx.read_json(story["text"]["charactersPath"], {"characters": []})
     existing_voices = {
@@ -88,9 +110,9 @@ def main() -> int:
             else:
                 segments.append(build_segment(len(segments) + 1, "narrator", pending))
 
-    blocks = [block.strip() for block in re.split(r"\n\s*\n", story_text) if block.strip()]
+    blocks = [block.strip() for block in re.split(r"\n+", story_text) if block.strip()]
     for block in blocks:
-        match = speaker_pattern.match(block)
+        match = speaker_pattern.match(block) if characters_enabled else None
         if not match:
             buffer.append(block)
             continue

@@ -1,5 +1,7 @@
-import { Save, Wand2 } from 'lucide-react';
-import React from 'react';
+import { FileUp, Save, Wand2 } from 'lucide-react';
+import React, { useRef } from 'react';
+
+import { readStoryFilesAsText } from '@/features/stories/utils/readStoryFiles';
 
 interface StoryTabProps {
   storyText: string;
@@ -20,6 +22,18 @@ export const StoryTab: React.FC<StoryTabProps> = ({
   canProcess,
   isDirty,
 }) => {
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const handleUploadFiles = async (event: React.ChangeEvent<HTMLInputElement>): Promise<void> => {
+    const files = event.target.files;
+    if (!files || files.length === 0) {
+      return;
+    }
+    const text = await readStoryFilesAsText(files);
+    onChangeStoryText(text);
+    event.target.value = '';
+  };
+
   return (
     <section className="panel form">
       <div className="page-header">
@@ -40,6 +54,23 @@ export const StoryTab: React.FC<StoryTabProps> = ({
           <Wand2 size={16} aria-hidden="true" />
           Process story
         </button>
+        <button
+          className="button secondary"
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={isBusy}
+        >
+          <FileUp size={16} aria-hidden="true" />
+          Upload markdown
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".md,text/markdown"
+          multiple
+          hidden
+          onChange={(event) => void handleUploadFiles(event)}
+        />
       </div>
     </section>
   );

@@ -10,7 +10,7 @@ import type {
   StoryDetail,
 } from '@/types/story';
 
-export type TabId = 'overview' | 'story' | 'characters' | 'segments' | 'audio' | 'logs';
+export type TabId = 'overview' | 'story' | 'characters' | 'segments' | 'audio' | 'analytics' | 'logs';
 
 function nextLocalSegmentId(segments: SegmentRecord[]): number {
   return (
@@ -165,6 +165,32 @@ export function useStoryWorkspace(slug: string) {
 
   const playingSegment = playerIndex !== null ? playableSegments[playerIndex] ?? null : null;
 
+  // playerIndex is a plain index into playableSegments, which is recomputed
+  // whenever segments changes (e.g. a background job flips a segment's
+  // eligibility mid-playback). If the array reshuffles while the index
+  // itself doesn't change, that index now points at a different segment —
+  // relocate the segment actually being played instead of silently jumping.
+  const playerSyncRef = useRef<{ index: number | null; id: string | null }>({
+    index: null,
+    id: null,
+  });
+  useEffect(() => {
+    if (playerIndex === null) {
+      playerSyncRef.current = { index: null, id: null };
+      return;
+    }
+    const last = playerSyncRef.current;
+    if (last.index === playerIndex && last.id !== null) {
+      const currentId = playableSegments[playerIndex]?.id ?? null;
+      if (currentId !== last.id) {
+        const correctedIndex = playableSegments.findIndex((segment) => segment.id === last.id);
+        setPlayerIndex(correctedIndex >= 0 ? correctedIndex : null);
+        return;
+      }
+    }
+    playerSyncRef.current = { index: playerIndex, id: playableSegments[playerIndex]?.id ?? null };
+  }, [playableSegments, playerIndex]);
+
   const playFromSegment = useCallback(
     (segmentId: string): void => {
       const index = playableSegments.findIndex((segment) => segment.id === segmentId);
@@ -194,10 +220,11 @@ export function useStoryWorkspace(slug: string) {
   const segmentApproval = detail?.story.approvals.segments.status ?? 'pending';
   const verifiedApproval = detail?.story.approvals.verifiedAudio.status ?? 'pending';
   const hasActiveJob = detail?.activeJob !== null && detail?.activeJob !== undefined;
-  const canProcess = storyText.trim().length > 0 && !hasActiveJob;
-  const canGenerate = segmentApproval === 'approved' && voicesReady && !hasActiveJob;
-  const canConfirmVerified = allVerified && !hasActiveJob;
-  const canConcat = verifiedApproval === 'approved' && !hasActiveJob;
+  const isArchived = detail?.story.archived ?? false;
+  const canProcess = storyText.trim().length > 0 && !hasActiveJob && !isArchived;
+  const canGenerate = segmentApproval === 'approved' && voicesReady && !hasActiveJob && !isArchived;
+  const canConfirmVerified = allVerified && !hasActiveJob && !isArchived;
+  const canConcat = verifiedApproval === 'approved' && !hasActiveJob && !isArchived;
 
   const runAction = useCallback(
     async (action: () => Promise<void>, successMessage = ''): Promise<void> => {
@@ -230,6 +257,12 @@ export function useStoryWorkspace(slug: string) {
     [runAction, slug],
   );
 
+  const stopJob = useCallback(async (): Promise<void> => {
+    await runAction(async () => {
+      await storiesApi.stopJob(slug);
+    }, 'Stop requested — the job will finish its current segment and exit.');
+  }, [runAction, slug]);
+
   const saveStory = useCallback(async (): Promise<void> => {
     await runAction(async () => {
       await storiesApi.saveStoryText(slug, storyText);
@@ -239,15 +272,27 @@ export function useStoryWorkspace(slug: string) {
 
   const saveCharacters = useCallback(async (): Promise<void> => {
     await runAction(async () => {
-      await storiesApi.saveCharacters(slug, { characters });
+      const result = await storiesApi.saveCharacters(slug, { characters });
       clearDirty('characters');
+      if (result.droppedCount > 0) {
+        toast.warning(
+          `${result.droppedCount} character(s) with a blank name or id were dropped — give ` +
+            'them a name before saving to keep them.',
+        );
+      }
     }, 'Characters saved.');
   }, [characters, clearDirty, runAction, slug]);
 
   const saveSegments = useCallback(async (): Promise<void> => {
     await runAction(async () => {
-      await storiesApi.saveSegments(slug, { segments });
+      const result = await storiesApi.saveSegments(slug, { segments });
       clearDirty('segments');
+      if (result.droppedCount > 0) {
+        toast.warning(
+          `${result.droppedCount} segment(s) with blank text were dropped — fill them in ` +
+            'before saving to keep them.',
+        );
+      }
     }, 'Segments saved.');
   }, [clearDirty, runAction, segments, slug]);
 
@@ -293,15 +338,20 @@ export function useStoryWorkspace(slug: string) {
   }, [loadJobLog, selectedJobId, detail?.activeJob?.status]);
 
   // Tail the running job's log so progress is visible without re-selecting it.
+  // Depend on the job id (a stable primitive), not the activeJob object —
+  // `detail` is a new object on every 3s poll, so depending on the object
+  // itself tears this interval down and restarts it every poll, collapsing
+  // its 2s cadence into the outer 3s one before it ever fires twice.
+  const activeJobId = detail?.activeJob?.id ?? null;
   useEffect(() => {
-    if (!detail?.activeJob || detail.activeJob.id !== selectedJobId) {
+    if (!activeJobId || activeJobId !== selectedJobId) {
       return;
     }
     const timer = window.setInterval(() => {
       void loadJobLog(selectedJobId);
     }, 2000);
     return () => window.clearInterval(timer);
-  }, [detail?.activeJob, loadJobLog, selectedJobId]);
+  }, [activeJobId, loadJobLog, selectedJobId]);
 
   useEffect(() => {
     const handler = (event: BeforeUnloadEvent): void => {
@@ -439,6 +489,7 @@ export function useStoryWorkspace(slug: string) {
     jobLog,
     isBusy,
     dirty,
+    clearDirty,
     voices,
     voicesError,
     regenSelection,
@@ -455,12 +506,14 @@ export function useStoryWorkspace(slug: string) {
     segmentApproval,
     verifiedApproval,
     hasActiveJob,
+    isArchived,
     canProcess,
     canGenerate,
     canConfirmVerified,
     canConcat,
     refresh,
     startJob,
+    stopJob,
     saveStory,
     saveCharacters,
     saveSegments,

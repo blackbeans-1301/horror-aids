@@ -5,6 +5,9 @@ import json
 import math
 import os
 import re
+import shutil
+import signal
+import subprocess
 import tempfile
 import wave
 from datetime import datetime, timezone
@@ -14,6 +17,42 @@ from typing import Any
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+# Exit code a worker returns when it stopped early because of a user-requested
+# cancellation (rather than finishing or crashing). Must match CANCELLED_EXIT_CODE
+# in src/lib/json-store.ts, which maps this back to job status "cancelled".
+STOPPED_EXIT_CODE = 75
+
+# Exit code for a run that finished without crashing but left some segments
+# unresolved (partial success). Distinct from the implicit exit code 1 an
+# uncaught exception produces, so the two don't collapse into the same
+# ambiguous "failed" job status. Must match NEEDS_REVIEW_EXIT_CODE in
+# src/lib/json-store.ts.
+NEEDS_REVIEW_EXIT_CODE = 2
+
+_stop_requested = False
+
+
+def _mark_stop_requested(signum: int, frame: Any) -> None:
+    global _stop_requested
+    _stop_requested = True
+
+
+def install_stop_handler() -> None:
+    """Opt in to cooperative shutdown on SIGTERM.
+
+    By default SIGTERM kills the process immediately, which would drop
+    whatever progress this run hasn't flushed to disk yet. Workers that call
+    this instead get a flag they can poll (stop_requested()) between units of
+    work, so they can finish the current segment, persist results, and exit
+    cleanly.
+    """
+    signal.signal(signal.SIGTERM, _mark_stop_requested)
+
+
+def stop_requested() -> bool:
+    return _stop_requested
 
 
 def slugify(value: str) -> str:
@@ -170,6 +209,121 @@ def resolve_voice_wav(project_root: Path, voice_id: str) -> Path:
     if not wav_path.exists():
         raise ValueError(f"voice reference WAV missing for {voice_id}: {wav_path}")
     return wav_path
+
+
+# Sentinel "model" id that routes call_omnivoice() to the native omnivoice.cpp
+# CLI instead of the Python omnivoice package — see workers/omnivoice.cpp
+# (built locally, not part of this repo) and data/models/omnivoice-gguf/.
+GGUF_MODEL_ID = "Serveurperso/OmniVoice-GGUF-BF16"
+
+_DEFAULT_GGUF_BINARY = "workers/omnivoice.cpp/build/omnivoice-tts"
+_DEFAULT_GGUF_MODEL_PATH = "data/models/omnivoice-gguf/omnivoice-base-BF16.gguf"
+_DEFAULT_GGUF_CODEC_PATH = "data/models/omnivoice-gguf/omnivoice-tokenizer-BF16.gguf"
+
+
+def _resolve_under(project_root: Path, configured: str | None, default: str) -> Path:
+    raw = configured or default
+    path = Path(raw)
+    return path if path.is_absolute() else (project_root / path).resolve()
+
+
+def _ensure_ref_transcript(ref_wav: Path) -> Path:
+    """omnivoice.cpp needs a transcript of the reference WAV for voice
+    cloning (--ref-text); the Python omnivoice model clones from audio alone,
+    so voices in data/voices.json were never asked for one. Transcribe once
+    with the Whisper CLI and cache the result next to the reference WAV.
+    """
+    transcript_path = ref_wav.with_suffix(".ref.txt")
+    if transcript_path.exists():
+        return transcript_path
+
+    whisper_command = os.getenv("WHISPER_COMMAND") or shutil.which("whisper")
+    if not whisper_command:
+        raise RuntimeError(
+            f"no cached transcript for {ref_wav.name} and no `whisper` CLI found to "
+            f"generate one; install openai-whisper or add {transcript_path.name} by hand"
+        )
+    completed = subprocess.run(
+        [
+            whisper_command,
+            str(ref_wav),
+            "--language",
+            "vi",
+            "--model",
+            "base",
+            "--output_format",
+            "txt",
+            "--output_dir",
+            str(ref_wav.parent),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(completed.stderr.strip() or "whisper transcription of reference wav failed")
+
+    generated = ref_wav.parent / f"{ref_wav.stem}.txt"
+    if not generated.exists():
+        raise RuntimeError(f"whisper did not produce a transcript for {ref_wav.name}")
+    generated.replace(transcript_path)
+    return transcript_path
+
+
+def run_omnivoice_cpp(
+    project_root: Path,
+    gguf_config: dict[str, Any],
+    text: str,
+    ref_wav: Path,
+    output_path: Path,
+    language: str = "Vietnamese",
+) -> None:
+    """Synthesize via the native omnivoice.cpp CLI (omnivoice-tts), running
+    on whatever GGML backend it was built with — Metal by default on macOS.
+    """
+    binary = _resolve_under(project_root, gguf_config.get("binary"), _DEFAULT_GGUF_BINARY)
+    model_path = _resolve_under(project_root, gguf_config.get("modelPath"), _DEFAULT_GGUF_MODEL_PATH)
+    codec_path = _resolve_under(project_root, gguf_config.get("codecPath"), _DEFAULT_GGUF_CODEC_PATH)
+    for label, path in (("omnivoice-tts binary", binary), ("base model", model_path), ("codec model", codec_path)):
+        if not path.exists():
+            raise RuntimeError(f"{label} not found at {path} — build/download it first (see workers/omnivoice.cpp)")
+
+    ref_text_path = _ensure_ref_transcript(ref_wav)
+
+    # MaskGIT decode steps: the CLI default (32) costs ~140ms/step on Metal
+    # and scales ~linearly, so this is the single biggest speed/quality knob
+    # for this engine — halving it roughly halves generation time. Duration
+    # is unaffected either way, only fidelity of the decode.
+    steps = gguf_config.get("steps")
+
+    command = [
+        str(binary),
+        "--model",
+        str(model_path),
+        "--codec",
+        str(codec_path),
+        "--ref-wav",
+        str(ref_wav),
+        "--ref-text",
+        str(ref_text_path),
+        "--lang",
+        language,
+        "-o",
+        str(output_path),
+    ]
+    if steps:
+        command += ["--steps", str(int(steps))]
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    completed = subprocess.run(
+        command,
+        input=text,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(completed.stderr.strip()[-2000:] or "omnivoice-tts failed")
 
 
 _MODEL_CACHE: dict[tuple[str, str], Any] = {}

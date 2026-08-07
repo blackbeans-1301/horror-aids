@@ -1,9 +1,18 @@
 import type { Metadata } from 'next';
+import { Fraunces, Inter } from 'next/font/google';
 import 'react-toastify/dist/ReactToastify.css';
 import './globals.css';
 
 import { ConfirmProvider } from '@/components/ConfirmDialog';
 import { ToastProvider } from '@/components/ToastProvider';
+
+const inter = Inter({ subsets: ['latin', 'vietnamese'], variable: '--font-sans' });
+const fraunces = Fraunces({
+  subsets: ['latin', 'vietnamese'],
+  variable: '--font-display',
+  weight: ['500', '600'],
+  style: ['normal', 'italic'],
+});
 
 export const metadata: Metadata = {
   title: 'Horror Aids',
@@ -17,7 +26,7 @@ interface RootLayoutProps {
 export default function RootLayout({ children }: RootLayoutProps): React.ReactElement {
   return (
     <html lang="en">
-      <body>
+      <body className={`${inter.variable} ${fraunces.variable}`}>
         <ConfirmProvider>{children}</ConfirmProvider>
         <ToastProvider />
       </body>

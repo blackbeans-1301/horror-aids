@@ -13,7 +13,7 @@ interface TtsConfig {
   model: string;
   modelLabel: string;
   modelRepo: string;
-  models: Array<{ id: string; label: string }>;
+  models: Array<{ id: string; label: string; supportsDevice: boolean }>;
   device: string;
   devices: Array<{ id: string; label: string }>;
   sampleRate: number;
@@ -21,6 +21,9 @@ interface TtsConfig {
   inlineCues: string[];
   voicesDir: string;
   verificationEnabled: boolean;
+  characterSegmentationEnabled: boolean;
+  ggufSteps: number;
+  ggufStepsRange: { min: number; max: number; default: number };
   notes: string;
   error?: string;
 }
@@ -33,9 +36,13 @@ export const SettingsClient: React.FC = () => {
   const [isBusy, setIsBusy] = useState<boolean>(false);
   const [voiceName, setVoiceName] = useState<string>('');
   const [previewVoiceId, setPreviewVoiceId] = useState<string>('');
+  const [previewLoading, setPreviewLoading] = useState<boolean>(false);
   const [selectedModel, setSelectedModel] = useState<string>('k2-fsa/OmniVoice');
   const [selectedDevice, setSelectedDevice] = useState<string>('auto');
   const [selectedVerificationEnabled, setSelectedVerificationEnabled] = useState<boolean>(true);
+  const [selectedCharacterSegmentationEnabled, setSelectedCharacterSegmentationEnabled] =
+    useState<boolean>(true);
+  const [selectedGgufSteps, setSelectedGgufSteps] = useState<number>(32);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const confirm = useConfirm();
 
@@ -58,6 +65,8 @@ export const SettingsClient: React.FC = () => {
         setSelectedModel(data.model);
         setSelectedDevice(data.device);
         setSelectedVerificationEnabled(data.verificationEnabled);
+        setSelectedCharacterSegmentationEnabled(data.characterSegmentationEnabled);
+        setSelectedGgufSteps(data.ggufSteps);
         setConfigError('');
       } else {
         setConfig(null);
@@ -73,26 +82,27 @@ export const SettingsClient: React.FC = () => {
     void refresh();
   }, [refresh]);
 
-  const hasPendingChanges =
+  // Each settings panel applies (and is gated by) only its own fields — a
+  // shared single dirty-flag/apply used to mean clicking Apply in any one
+  // panel silently committed whatever was pending in the other two as well.
+  const hasModelPendingChanges =
     config !== null &&
     (selectedModel !== config.model ||
       selectedDevice !== config.device ||
-      selectedVerificationEnabled !== config.verificationEnabled);
+      selectedGgufSteps !== config.ggufSteps);
+  const hasVerificationPendingChanges =
+    config !== null && selectedVerificationEnabled !== config.verificationEnabled;
+  const hasSegmentationPendingChanges =
+    config !== null && selectedCharacterSegmentationEnabled !== config.characterSegmentationEnabled;
 
-  const applyEngine = useCallback(async (): Promise<void> => {
-    if (!config) {
-      return;
-    }
-    const switchingModel = selectedModel !== config.model;
-    const body: { model?: string; device?: string; verificationEnabled?: boolean } = switchingModel
-      ? { model: selectedModel }
-      : { device: selectedDevice };
-    if (selectedVerificationEnabled !== config.verificationEnabled) {
-      body.verificationEnabled = selectedVerificationEnabled;
-    }
-
-    setIsBusy(true);
-    try {
+  const postConfig = useCallback(
+    async (body: {
+      model?: string;
+      device?: string;
+      verificationEnabled?: boolean;
+      characterSegmentationEnabled?: boolean;
+      ggufSteps?: number;
+    }): Promise<TtsConfig> => {
       const response = await fetch('/api/tts-config', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -106,10 +116,31 @@ export const SettingsClient: React.FC = () => {
       setSelectedModel(data.model);
       setSelectedDevice(data.device);
       setSelectedVerificationEnabled(data.verificationEnabled);
+      setSelectedCharacterSegmentationEnabled(data.characterSegmentationEnabled);
+      setSelectedGgufSteps(data.ggufSteps);
+      return data;
+    },
+    [],
+  );
+
+  const applyModelSettings = useCallback(async (): Promise<void> => {
+    if (!config) {
+      return;
+    }
+    const switchingModel = selectedModel !== config.model;
+    const body: { model?: string; device?: string; ggufSteps?: number } = switchingModel
+      ? { model: selectedModel }
+      : { device: selectedDevice };
+    if (selectedGgufSteps !== config.ggufSteps) {
+      body.ggufSteps = selectedGgufSteps;
+    }
+
+    setIsBusy(true);
+    try {
+      const data = await postConfig(body);
       toast.success(
         `Saved — ${data.modelLabel} on ${data.device.toUpperCase()} will be used for the next ` +
-          'preview or generation run (first real run downloads the model, which can take a while). ' +
-          `Audio verification is ${data.verificationEnabled ? 'ON' : 'OFF'}.`,
+          'preview or generation run (first real run downloads the model, which can take a while).',
       );
       await refresh();
     } catch (error) {
@@ -117,7 +148,35 @@ export const SettingsClient: React.FC = () => {
     } finally {
       setIsBusy(false);
     }
-  }, [config, refresh, selectedDevice, selectedModel, selectedVerificationEnabled]);
+  }, [config, postConfig, refresh, selectedDevice, selectedGgufSteps, selectedModel]);
+
+  const applyVerificationSetting = useCallback(async (): Promise<void> => {
+    setIsBusy(true);
+    try {
+      const data = await postConfig({ verificationEnabled: selectedVerificationEnabled });
+      toast.success(`Audio verification is ${data.verificationEnabled ? 'ON' : 'OFF'}.`);
+      await refresh();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Save failed');
+    } finally {
+      setIsBusy(false);
+    }
+  }, [postConfig, refresh, selectedVerificationEnabled]);
+
+  const applySegmentationSetting = useCallback(async (): Promise<void> => {
+    setIsBusy(true);
+    try {
+      const data = await postConfig({
+        characterSegmentationEnabled: selectedCharacterSegmentationEnabled,
+      });
+      toast.success(`Character segmentation is ${data.characterSegmentationEnabled ? 'ON' : 'OFF'}.`);
+      await refresh();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Save failed');
+    } finally {
+      setIsBusy(false);
+    }
+  }, [postConfig, refresh, selectedCharacterSegmentationEnabled]);
 
   const uploadVoice = useCallback(async (): Promise<void> => {
     const file = fileInputRef.current?.files?.[0];
@@ -218,10 +277,17 @@ export const SettingsClient: React.FC = () => {
           </div>
         </div>
 
-        {message ? <p className="panel">{message}</p> : null}
+        <div className="waveform-divider" aria-hidden="true">
+          {Array.from({ length: 12 }).map((_, index) => (
+            <span key={index} />
+          ))}
+        </div>
 
-        <section className="grid">
+        {message ? <p className="status-banner">{message}</p> : null}
+
+        <section className="settings-grid">
           <div className="panel">
+            <div className="eyebrow">Engine</div>
             <h2>Model</h2>
             {config ? (
               <>
@@ -255,7 +321,34 @@ export const SettingsClient: React.FC = () => {
                     ))}
                   </select>
                 </label>
-                {selectedModel === config.model ? (
+                {!config.models.find((model) => model.id === selectedModel)?.supportsDevice ? (
+                  <>
+                    <p className="label">
+                      This model picks its own backend (Metal on macOS) — there is no device to
+                      choose.
+                    </p>
+                    <label className="field">
+                      <span className="label">
+                        MaskGIT steps: {selectedGgufSteps} (default {config.ggufStepsRange.default})
+                      </span>
+                      <input
+                        type="range"
+                        min={config.ggufStepsRange.min}
+                        max={config.ggufStepsRange.max}
+                        step={1}
+                        value={selectedGgufSteps}
+                        onChange={(event) => setSelectedGgufSteps(Number(event.target.value))}
+                        disabled={isBusy}
+                      />
+                      <span className="label">
+                        Fewer steps generate faster but decode is coarser — generation time
+                        scales roughly linearly with this (32→16 steps is about 2x faster).
+                        Duration/pacing is unaffected either way. Listen to a preview after
+                        lowering it before using it on a real story.
+                      </span>
+                    </label>
+                  </>
+                ) : selectedModel === config.model ? (
                   <label className="field">
                     <span className="label">Compute device</span>
                     <select
@@ -280,8 +373,8 @@ export const SettingsClient: React.FC = () => {
                 <button
                   className="button"
                   type="button"
-                  onClick={() => void applyEngine()}
-                  disabled={isBusy || !hasPendingChanges}
+                  onClick={() => void applyModelSettings()}
+                  disabled={isBusy || !hasModelPendingChanges}
                 >
                   <RefreshCw size={16} aria-hidden="true" />
                   Apply
@@ -293,6 +386,7 @@ export const SettingsClient: React.FC = () => {
           </div>
 
           <div className="panel form">
+            <div className="eyebrow">Quality Control</div>
             <h2>Audio Verification</h2>
             {config ? (
               <>
@@ -302,7 +396,7 @@ export const SettingsClient: React.FC = () => {
                   transcription pass per batch). Turn it off to accept generated audio immediately and
                   review it by ear instead.
                 </p>
-                <label className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: '0.5rem' }}>
+                <label className="field row">
                   <input
                     type="checkbox"
                     checked={selectedVerificationEnabled}
@@ -314,8 +408,8 @@ export const SettingsClient: React.FC = () => {
                 <button
                   className="button"
                   type="button"
-                  onClick={() => void applyEngine()}
-                  disabled={isBusy || !hasPendingChanges}
+                  onClick={() => void applyVerificationSetting()}
+                  disabled={isBusy || !hasVerificationPendingChanges}
                 >
                   <RefreshCw size={16} aria-hidden="true" />
                   Apply
@@ -327,6 +421,42 @@ export const SettingsClient: React.FC = () => {
           </div>
 
           <div className="panel form">
+            <div className="eyebrow">Story Processing</div>
+            <h2>Character Segmentation</h2>
+            {config ? (
+              <>
+                <p className="label">
+                  When &ldquo;Process story&rdquo; splits your text, it looks for &ldquo;Name:
+                  dialogue&rdquo; lines and gives each character its own segment and voice. Turn
+                  this off to keep everything as a single narrator — useful if you only ever
+                  generate narrator-only audio.
+                </p>
+                <label className="field row">
+                  <input
+                    type="checkbox"
+                    checked={selectedCharacterSegmentationEnabled}
+                    onChange={(event) => setSelectedCharacterSegmentationEnabled(event.target.checked)}
+                    disabled={isBusy}
+                  />
+                  <span className="label">Split dialogue into character segments</span>
+                </label>
+                <button
+                  className="button"
+                  type="button"
+                  onClick={() => void applySegmentationSetting()}
+                  disabled={isBusy || !hasSegmentationPendingChanges}
+                >
+                  <RefreshCw size={16} aria-hidden="true" />
+                  Apply
+                </button>
+              </>
+            ) : (
+              <p className="label">{configError || 'Loading...'}</p>
+            )}
+          </div>
+
+          <div className="panel form">
+            <div className="eyebrow">Voice Library</div>
             <h2>Add Cloned Voice</h2>
             <p className="label">
               Upload a clean 3-5 second WAV of the voice you want to clone. It becomes available
@@ -381,16 +511,30 @@ export const SettingsClient: React.FC = () => {
                         autoPlay
                         controls
                         src={`/api/voice-preview?voice=${encodeURIComponent(voice.id)}`}
+                        onCanPlay={() => setPreviewLoading(false)}
+                        onEnded={() => {
+                          setPreviewLoading(false);
+                          setPreviewVoiceId('');
+                        }}
+                        onError={() => {
+                          setPreviewLoading(false);
+                          setPreviewVoiceId('');
+                          toast.error('Could not play preview.');
+                        }}
                       />
                     ) : (
                       <button
                         className="button secondary"
                         type="button"
                         title="Synthesize a short horror sample with this voice"
-                        onClick={() => setPreviewVoiceId(voice.id)}
+                        disabled={previewLoading}
+                        onClick={() => {
+                          setPreviewLoading(true);
+                          setPreviewVoiceId(voice.id);
+                        }}
                       >
                         <Play size={15} aria-hidden="true" />
-                        Test
+                        {previewLoading ? 'Loading...' : 'Test'}
                       </button>
                     )}
                   </td>

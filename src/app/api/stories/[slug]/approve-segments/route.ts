@@ -16,7 +16,11 @@ export async function POST(
     readSegments(slug),
   ]);
   const characterIds = new Set(characters.map((character) => character.id));
-  const usedSpeakerIds = new Set(segmentsFile.segments.map((segment) => segment.speakerId));
+  const usedSpeakerIds = new Set(
+    segmentsFile.segments
+      .filter((segment) => segment.status !== 'skipped')
+      .map((segment) => segment.speakerId),
+  );
 
   if (!characters.some((character) => character.role === 'narrator')) {
     return NextResponse.json({ error: 'Narrator is required' }, { status: 400 });
