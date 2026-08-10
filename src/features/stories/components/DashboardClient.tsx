@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Archive, BadgeCheck, BookOpen, FilePlus2, FileUp, ListChecks, RefreshCw } from 'lucide-react';
+import { Archive, AudioLines, BookOpen, Clapperboard, FilePlus2, FileUp, ListChecks } from 'lucide-react';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
 
@@ -11,11 +11,12 @@ import { AppShell } from '@/features/stories/components/AppShell';
 import { readStoryFilesAsText } from '@/features/stories/utils/readStoryFiles';
 import type { StoryIndexEntry } from '@/types/story';
 
-type DashboardTab = 'active' | 'verified' | 'archived';
+type DashboardTab = 'active' | 'verified_audio' | 'verified_video' | 'archived';
 
 const DASHBOARD_TABS: Array<{ id: DashboardTab; label: string; icon: React.ReactNode }> = [
   { id: 'active', label: 'Active', icon: <ListChecks size={14} aria-hidden="true" /> },
-  { id: 'verified', label: 'Verified', icon: <BadgeCheck size={14} aria-hidden="true" /> },
+  { id: 'verified_audio', label: 'Verified Audio', icon: <AudioLines size={14} aria-hidden="true" /> },
+  { id: 'verified_video', label: 'Verified Video', icon: <Clapperboard size={14} aria-hidden="true" /> },
   { id: 'archived', label: 'Archived', icon: <Archive size={14} aria-hidden="true" /> },
 ];
 
@@ -88,24 +89,35 @@ export const DashboardClient: React.FC = () => {
     event.target.value = '';
   }, []);
 
+  // Three mutually exclusive buckets for a non-archived story, by how far its
+  // pipeline has gone: still in progress, audio done but video not yet
+  // approved, or fully done (video approved).
   const byTab = (tab: DashboardTab): StoryIndexEntry[] =>
     stories.filter((story) => {
       if (tab === 'archived') {
         return story.archived;
       }
-      if (tab === 'verified') {
-        return !story.archived && story.status === 'audio_complete';
+      if (story.archived) {
+        return false;
       }
-      return !story.archived && story.status !== 'audio_complete';
+      if (tab === 'verified_video') {
+        return story.status === 'video_complete';
+      }
+      if (tab === 'verified_audio') {
+        return story.status === 'audio_complete';
+      }
+      return story.status !== 'video_complete' && story.status !== 'audio_complete';
     });
 
   const visibleStories = byTab(activeTab);
   const emptyLabel =
     activeTab === 'archived'
       ? 'No archived stories.'
-      : activeTab === 'verified'
-        ? 'No verified stories yet — approve final audio in a workspace to see it here.'
-        : 'Story workspaces will appear here after creation.';
+      : activeTab === 'verified_video'
+        ? 'No completed videos yet — approve a final video in a workspace to see it here.'
+        : activeTab === 'verified_audio'
+          ? 'No stories with verified audio yet — approve final audio in a workspace to see it here.'
+          : 'Story workspaces will appear here after creation.';
 
   return (
     <AppShell>
@@ -124,10 +136,6 @@ export const DashboardClient: React.FC = () => {
               <BookOpen size={16} aria-hidden="true" />
               Sync từ Thư viện
             </Link>
-            <button className="button secondary" type="button" onClick={() => void loadStories()}>
-              <RefreshCw size={16} aria-hidden="true" />
-              Refresh
-            </button>
           </div>
         </div>
 

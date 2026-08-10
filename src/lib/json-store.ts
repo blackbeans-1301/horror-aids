@@ -1,24 +1,36 @@
 import 'server-only';
 
+import { constants as fsConstants } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+import { probeIntegratedLufs, probeMediaMetadata } from '@/lib/media-probe';
 import {
+  configRoot,
   dataRoot,
+  mediaCategoryDir,
+  mediaManifestPath,
+  mediaRoot,
+  projectRoot,
   resolveStoryPath,
   slugify,
   storiesRoot,
   storyDir,
+  toPosixPath,
   voicePreviewCacheRoot,
 } from '@/lib/paths';
 import type {
   ApprovalStatus,
+  AudioMediaAsset,
   CharactersFile,
   JobRecord,
   JobsFile,
   JobStatus,
   JobType,
   JobTypeAnalytics,
+  MediaAsset,
+  MediaCategory,
+  MediaLibraryFile,
   SegmentRecord,
   SegmentsFile,
   SourceType,
@@ -27,11 +39,50 @@ import type {
   StoryIndex,
   StoryIndexEntry,
   StoryRecord,
+  VideoMediaAsset,
+  VideoPlanFile,
+  VideoRenderReceipt,
+  VideoRenderSummary,
   VoiceRecord,
   VoicesFile,
 } from '@/types/story';
 
-const JOB_TYPES: JobType[] = ['process_story', 'generate_verify_tts', 'concat_audio'];
+const JOB_TYPES: JobType[] = ['process_story', 'generate_verify_tts', 'concat_audio', 'render_video'];
+
+const MEDIA_CATEGORIES: MediaCategory[] = [
+  'bg_music',
+  'rain_ambience',
+  'intro_music',
+  'scene_video',
+];
+
+interface VideoAppConfig {
+  introDurationMs?: number;
+  leadInMs?: number;
+  tailOutMs?: number;
+  transitionMs?: number;
+  defaultGainDb?: { introMusic?: number; bgMusic?: number; rainAmbience?: number };
+}
+
+const DEFAULT_VIDEO_CONFIG: Required<Omit<VideoAppConfig, 'defaultGainDb'>> & {
+  defaultGainDb: Required<NonNullable<VideoAppConfig['defaultGainDb']>>;
+} = {
+  introDurationMs: 10000,
+  leadInMs: 800,
+  tailOutMs: 4000,
+  transitionMs: 1000,
+  defaultGainDb: { introMusic: -3, bgMusic: -22, rainAmbience: -26 },
+};
+
+async function readVideoAppConfig(): Promise<typeof DEFAULT_VIDEO_CONFIG> {
+  const configPath = path.join(configRoot, 'app.json');
+  const config = await readJsonFile<{ video?: VideoAppConfig }>(configPath, {});
+  return {
+    ...DEFAULT_VIDEO_CONFIG,
+    ...config.video,
+    defaultGainDb: { ...DEFAULT_VIDEO_CONFIG.defaultGainDb, ...config.video?.defaultGainDb },
+  };
+}
 
 function computeStoryAnalytics(story: StoryRecord, storyJobs: JobRecord[]): StoryAnalytics {
   const jobs: JobTypeAnalytics[] = JOB_TYPES.map((type) => {
@@ -120,6 +171,32 @@ async function atomicWrite(filePath: string, content: string | Buffer): Promise<
   await fs.rename(tmpPath, filePath);
 }
 
+// Ingests a file already on this machine without reading it through the
+// browser/HTTP round trip a <input type="file"> upload requires — the
+// operator gives an absolute path, and the server (which runs on their own
+// machine) copies it directly on disk. COPYFILE_FICLONE asks for an APFS
+// copy-on-write clone (instant, ~0 extra disk) and transparently falls back
+// to a normal byte copy if the source/dest aren't on a filesystem that
+// supports it — see docs/Specification Documents/09_WORKSPACE_ISOLATION_SPEC.md's
+// use of the same `clonefile` mechanism for snapshotting.
+async function copyLocalFile(sourcePath: string, destPath: string): Promise<void> {
+  const stat = await fs.stat(sourcePath).catch(() => null);
+  if (!stat) {
+    throw new Error(`File not found: ${sourcePath}`);
+  }
+  if (!stat.isFile()) {
+    throw new Error(`Not a file: ${sourcePath}`);
+  }
+  if (stat.size === 0) {
+    throw new Error(`File is empty: ${sourcePath}`);
+  }
+
+  await ensureDir(path.dirname(destPath));
+  const tmpPath = `${destPath}.${process.pid}.${Date.now()}.tmp`;
+  await fs.copyFile(sourcePath, tmpPath, fsConstants.COPYFILE_FICLONE);
+  await fs.rename(tmpPath, destPath);
+}
+
 export async function writeJsonFile<T>(filePath: string, data: T): Promise<void> {
   await atomicWrite(filePath, `${JSON.stringify(data, null, 2)}\n`);
 }
@@ -154,6 +231,12 @@ export async function ensureDataFiles(): Promise<void> {
 
   if (!(await pathExists(voicesPath))) {
     await writeJsonFile<VoicesFile>(voicesPath, { voices: [] });
+  }
+
+  await ensureDir(mediaRoot);
+  await Promise.all(MEDIA_CATEGORIES.map((category) => ensureDir(mediaCategoryDir(category))));
+  if (!(await pathExists(mediaManifestPath))) {
+    await writeJsonFile<MediaLibraryFile>(mediaManifestPath, { schemaVersion: 1, media: [] });
   }
 }
 
@@ -304,6 +387,7 @@ export async function createStory(input: {
   await Promise.all([
     ensureDir(path.join(root, 'text')),
     ensureDir(path.join(root, 'audio', 'segments')),
+    ensureDir(path.join(root, 'video')),
     ensureDir(path.join(root, 'metadata')),
     ensureDir(path.join(root, 'logs')),
     ensureDir(path.join(root, 'tmp', 'whisper')),
@@ -331,11 +415,19 @@ export async function createStory(input: {
       segments: { status: 'pending', approvedAt: null },
       verifiedAudio: { status: 'pending', approvedAt: null },
       finalAudio: { status: 'pending', approvedAt: null },
+      finalVideo: { status: 'pending', approvedAt: null },
     },
     audio: {
       segmentsDir: 'audio/segments',
       finalPath: 'audio/final.m4a',
       status: 'pending',
+    },
+    video: {
+      planPath: 'video/plan.json',
+      finalPath: 'video/final.mp4',
+      status: 'pending',
+      durationMs: null,
+      renderedAt: null,
     },
   };
 
@@ -378,13 +470,25 @@ export async function readStory(slug: string): Promise<StoryRecord> {
   if (!story) {
     throw new Error(`Story not found: ${slug}`);
   }
-  // Stories created before the archive/library-import features shipped have no
-  // archived/archivedAt/sourceContentId fields on disk.
+  // Stories created before the archive/library-import/video-assembly features
+  // shipped have no archived/archivedAt/sourceContentId/approvals.finalVideo/
+  // video fields on disk.
   return {
     ...story,
     archived: story.archived ?? false,
     archivedAt: story.archivedAt ?? null,
     sourceContentId: story.sourceContentId ?? null,
+    approvals: {
+      ...story.approvals,
+      finalVideo: story.approvals?.finalVideo ?? { status: 'pending', approvedAt: null },
+    },
+    video: story.video ?? {
+      planPath: 'video/plan.json',
+      finalPath: 'video/final.mp4',
+      status: 'pending',
+      durationMs: null,
+      renderedAt: null,
+    },
   };
 }
 
@@ -465,6 +569,8 @@ export async function readStoryText(slug: string): Promise<string> {
 export async function writeStoryText(slug: string, storyText: string): Promise<void> {
   const story = await readStory(slug);
   await writeTextFile(resolveStoryPath(slug, story.text.storyPath), storyText);
+  // Deliberately does not touch video/plan.json or video/intro.jpg — those are
+  // expensive human choices that remain valid across a text edit + re-render.
   await patchStory(slug, (current) => ({
     ...current,
     status: 'story_draft',
@@ -472,14 +578,16 @@ export async function writeStoryText(slug: string, storyText: string): Promise<v
       segments: { status: 'pending', approvedAt: null },
       verifiedAudio: { status: 'pending', approvedAt: null },
       finalAudio: { status: 'pending', approvedAt: null },
+      finalVideo: { status: 'pending', approvedAt: null },
     },
     audio: { ...current.audio, status: 'pending' },
+    video: { ...current.video, status: 'pending' },
   }));
 }
 
 export async function setApproval(
   slug: string,
-  key: 'segments' | 'verifiedAudio' | 'finalAudio',
+  key: 'segments' | 'verifiedAudio' | 'finalAudio' | 'finalVideo',
   status: ApprovalStatus,
 ): Promise<StoryRecord> {
   const approvedAt = status === 'approved' ? new Date().toISOString() : null;
@@ -505,17 +613,23 @@ export async function setApproval(
       next.audio = { ...next.audio, status: 'complete' };
     }
 
+    if (key === 'finalVideo' && status === 'approved') {
+      next.status = 'video_complete';
+    }
+
     return next;
   });
 }
 
 export async function getStoryDetail(slug: string): Promise<StoryDetail> {
-  const [story, storyText, characters, segments, jobs] = await Promise.all([
+  const [story, storyText, characters, segments, jobs, videoPlan, videoRenders] = await Promise.all([
     readStory(slug),
     readStoryText(slug),
     readCharacters(slug),
     readSegments(slug),
     readJobs(),
+    readVideoPlanOrDefaults(slug),
+    listVideoRenders(slug),
   ]);
   const storyJobs = jobs.jobs
     .filter((job) => job.storyId === slug)
@@ -525,6 +639,7 @@ export async function getStoryDetail(slug: string): Promise<StoryDetail> {
   // run buttons disabled, or the user re-clicks and gets a rejected start.
   const activeJob = storyJobs.find((job) => isRunning(job)) ?? null;
   const finalAudioExists = await pathExists(resolveStoryPath(slug, story.audio.finalPath));
+  const finalVideoExists = await pathExists(resolveStoryPath(slug, story.video.finalPath));
 
   return {
     story,
@@ -534,6 +649,9 @@ export async function getStoryDetail(slug: string): Promise<StoryDetail> {
     activeJob,
     recentJobs: storyJobs.slice(0, 8),
     finalAudioExists,
+    videoPlan,
+    finalVideoExists,
+    videoRenders,
     analytics: computeStoryAnalytics(story, storyJobs),
   };
 }
@@ -560,29 +678,38 @@ export async function writeWorkerResult(
   await writeJsonFile(resolveStoryPath(slug, resultPath), result);
 }
 
-export function resolveAudioAsset(slug: string, relativePath: string): {
-  absolutePath: string;
-  contentType: string;
-} {
+const ASSET_CONTENT_TYPES: Record<string, string> = {
+  '.wav': 'audio/wav',
+  '.mp3': 'audio/mpeg',
+  '.m4a': 'audio/mp4',
+  '.mp4': 'video/mp4',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
+  '.webp': 'image/webp',
+};
+
+// resolveStoryPath only guards against escaping the story folder root; the
+// asset route is documented as serving only specific top-level subfolders, so
+// this also confirms the resolved path is actually inside one of them — a raw
+// string check like relativePath.startsWith('audio/') passes for
+// "audio/../story.json" (still inside the story root, but no longer inside
+// audio/).
+export function resolveStoryAsset(
+  slug: string,
+  relativePath: string,
+  allowedDirs: string[] = ['audio'],
+): { absolutePath: string; contentType: string } {
   const resolved = resolveStoryPath(slug, relativePath);
-  // resolveStoryPath only guards against escaping the story folder root; this
-  // route is documented as audio-only, so also confirm the resolved path is
-  // actually inside audio/ — a raw string check like relativePath.startsWith
-  // ('audio/') passes for "audio/../story.json" (still inside the story
-  // root, but no longer inside audio/).
-  const audioRoot = path.join(storyDir(slug), 'audio');
-  if (resolved !== audioRoot && !resolved.startsWith(`${audioRoot}${path.sep}`)) {
-    throw new Error('Only audio assets can be served');
+  const insideAllowedDir = allowedDirs.some((dir) => {
+    const dirRoot = path.join(storyDir(slug), dir);
+    return resolved === dirRoot || resolved.startsWith(`${dirRoot}${path.sep}`);
+  });
+  if (!insideAllowedDir) {
+    throw new Error(`Only assets under ${allowedDirs.map((dir) => `${dir}/`).join(' or ')} can be served`);
   }
   const extension = path.extname(resolved).toLowerCase();
-  const contentType =
-    extension === '.wav'
-      ? 'audio/wav'
-      : extension === '.mp3'
-        ? 'audio/mpeg'
-        : extension === '.m4a'
-          ? 'audio/mp4'
-          : 'application/octet-stream';
+  const contentType = ASSET_CONTENT_TYPES[extension] ?? 'application/octet-stream';
 
   return { absolutePath: resolved, contentType };
 }
@@ -648,6 +775,469 @@ export async function deleteVoice(id: string): Promise<void> {
       .filter((entry) => entry.startsWith(`${id}__`))
       .map((entry) => fs.unlink(path.join(voicePreviewCacheRoot, entry)).catch(() => undefined)),
   );
+}
+
+// --- Media catalog (background music, rain ambience, intro music, scene
+// video) — a shared registry for the video-assembly stage, following the
+// same shape as the voice-cloning registry above but with four categories
+// instead of one and a probe step at ingest. See VIDEO_ASSEMBLY_PLAN.md §1.
+
+export async function readMediaLibrary(): Promise<MediaLibraryFile> {
+  await ensureDataFiles();
+  return readJsonFile<MediaLibraryFile>(mediaManifestPath, { schemaVersion: 1, media: [] });
+}
+
+async function writeMediaLibrary(library: MediaLibraryFile): Promise<void> {
+  await writeJsonFile(mediaManifestPath, library);
+}
+
+const DEFAULT_GAIN_CONFIG_KEY: Record<'bg_music' | 'rain_ambience' | 'intro_music', 'bgMusic' | 'rainAmbience' | 'introMusic'> = {
+  bg_music: 'bgMusic',
+  rain_ambience: 'rainAmbience',
+  intro_music: 'introMusic',
+};
+
+export async function addMediaAsset(input: {
+  category: MediaCategory;
+  name: string;
+  source?: string;
+  notes?: string;
+  loopable?: boolean;
+  extension: string;
+  // Exactly one of these: a browser-uploaded buffer, or an absolute path to
+  // a file already on this machine — the app runs on the operator's own
+  // machine (see 01_SYSTEM_ARCHITECTURE.md's "Localhost only" stance), so a
+  // local path is the operator pointing the server at their own disk, not an
+  // arbitrary remote client reaching into it. Never wire this file/route up
+  // behind anything but localhost.
+  file?: Buffer;
+  sourcePath?: string;
+}): Promise<MediaAsset> {
+  const name = input.name.trim();
+  const source = input.source?.trim() ?? '';
+  if (!name) {
+    throw new Error('Media name is required');
+  }
+  if (input.file && input.file.length === 0) {
+    throw new Error('Uploaded file is empty');
+  }
+  if (!input.file && !input.sourcePath) {
+    throw new Error('file or sourcePath is required');
+  }
+
+  const library = await readMediaLibrary();
+  const baseId = slugify(name);
+  let id = baseId;
+  let suffix = 2;
+  while (library.media.some((asset) => asset.id === id)) {
+    id = `${baseId}-${suffix}`;
+    suffix += 1;
+  }
+
+  const extension = input.extension.startsWith('.') ? input.extension : `.${input.extension}`;
+  const relativePath = path.join('data', 'media', input.category, `${id}${extension}`);
+  const absolutePath = path.join(mediaCategoryDir(input.category), `${id}${extension}`);
+  if (input.sourcePath) {
+    await copyLocalFile(input.sourcePath, absolutePath);
+  } else {
+    await atomicWrite(absolutePath, input.file as Buffer);
+  }
+
+  // ffprobe (metadata only) is fast regardless of file length, so it runs
+  // synchronously here. Loudness measurement decodes the whole file — at
+  // ~20-25x realtime that's minutes for a long ambience loop, far too slow
+  // to hold this request open for — so it's kicked off in the background
+  // below and patched into the manifest once it resolves.
+  const probe = await probeMediaMetadata(absolutePath, input.category);
+  const addedAt = new Date().toISOString();
+  const base = {
+    id,
+    category: input.category,
+    name,
+    path: toPosixPath(relativePath),
+    loopable: input.loopable ?? true,
+    durationMs: probe.durationMs,
+    source,
+    notes: input.notes?.trim() ?? '',
+    addedAt,
+  };
+
+  let asset: MediaAsset;
+  if (base.category === 'scene_video') {
+    asset = {
+      ...base,
+      category: 'scene_video',
+      width: probe.width,
+      height: probe.height,
+      fps: probe.fps,
+      hasAudioStream: probe.hasAudioStream,
+    } satisfies VideoMediaAsset;
+  } else {
+    const config = await readVideoAppConfig();
+    const gainKey = DEFAULT_GAIN_CONFIG_KEY[base.category];
+    asset = {
+      ...base,
+      category: base.category,
+      integratedLufs: null,
+      defaultGainDb: config.defaultGainDb[gainKey],
+    } satisfies AudioMediaAsset;
+  }
+
+  await writeMediaLibrary({ ...library, media: [...library.media, asset] });
+
+  if (asset.category !== 'scene_video') {
+    void backfillIntegratedLufs(asset.id, absolutePath);
+  }
+
+  return asset;
+}
+
+// Lets the operator correct anything the automated ingest got wrong: a
+// miscategorized upload, a name typo, or — the common one — a
+// loudness-derived defaultGainDb that turns out too loud/quiet once actually
+// heard against narration. Moving between the three audio categories is
+// allowed (same field shape); moving into/out of scene_video is not, since
+// that would require re-probing the file as a fundamentally different kind
+// of asset — delete and re-add covers that instead.
+export async function updateMediaAsset(
+  id: string,
+  patch: {
+    name?: string;
+    category?: MediaCategory;
+    source?: string;
+    notes?: string;
+    loopable?: boolean;
+    defaultGainDb?: number;
+  },
+): Promise<MediaAsset> {
+  const library = await readMediaLibrary();
+  const current = library.media.find((asset) => asset.id === id);
+  if (!current) {
+    throw new Error(`Unknown media id: ${id}`);
+  }
+
+  const nextCategory = patch.category ?? current.category;
+  const wasAudio = current.category !== 'scene_video';
+  const willBeAudio = nextCategory !== 'scene_video';
+  if (wasAudio !== willBeAudio) {
+    throw new Error(
+      'Cannot move a media asset between an audio category and scene video — delete and re-add it instead',
+    );
+  }
+
+  let nextPath = current.path;
+  if (nextCategory !== current.category) {
+    const extension = path.extname(current.path);
+    const oldAbsolutePath = path.join(projectRoot, current.path);
+    const newRelativePath = path.join('data', 'media', nextCategory, `${id}${extension}`);
+    const newAbsolutePath = path.join(mediaCategoryDir(nextCategory), `${id}${extension}`);
+    await ensureDir(path.dirname(newAbsolutePath));
+    await fs.rename(oldAbsolutePath, newAbsolutePath);
+    nextPath = toPosixPath(newRelativePath);
+  }
+
+  const name = patch.name?.trim() ? patch.name.trim() : current.name;
+  const source = patch.source !== undefined ? patch.source.trim() : current.source;
+  const notes = patch.notes !== undefined ? patch.notes.trim() : current.notes;
+  const loopable = patch.loopable !== undefined ? patch.loopable : current.loopable;
+
+  let nextAsset: MediaAsset;
+  if (current.category === 'scene_video') {
+    nextAsset = { ...current, path: nextPath, name, source, notes, loopable };
+  } else {
+    nextAsset = {
+      ...current,
+      category: nextCategory as 'bg_music' | 'rain_ambience' | 'intro_music',
+      path: nextPath,
+      name,
+      source,
+      notes,
+      loopable,
+      defaultGainDb: patch.defaultGainDb !== undefined ? patch.defaultGainDb : current.defaultGainDb,
+    };
+  }
+
+  await writeMediaLibrary({
+    ...library,
+    media: library.media.map((asset) => (asset.id === id ? nextAsset : asset)),
+  });
+  return nextAsset;
+}
+
+// Fire-and-forget: this process stays alive for the life of the dev/prod
+// server, so a background promise here really does finish — nothing awaits
+// it and the upload response has already gone out by the time it runs.
+// Re-reads the manifest fresh (rather than reusing the caller's stale copy)
+// so it doesn't clobber an unrelated asset added or removed in the meantime;
+// the asset having been deleted mid-analysis is not an error, just a no-op.
+async function backfillIntegratedLufs(id: string, absolutePath: string): Promise<void> {
+  try {
+    const integratedLufs = await probeIntegratedLufs(absolutePath);
+    if (integratedLufs === null) {
+      return;
+    }
+    const library = await readMediaLibrary();
+    const target = library.media.find((entry) => entry.id === id);
+    if (!target || target.category === 'scene_video') {
+      return;
+    }
+    await writeMediaLibrary({
+      ...library,
+      media: library.media.map((entry) => (entry.id === id ? { ...entry, integratedLufs } : entry)),
+    });
+  } catch {
+    // Loudness normalization is a nice-to-have consistency feature, not a
+    // correctness requirement — render-time gain falls back to the plan's
+    // bare gainDb when integratedLufs is null (see compute_gain_db in
+    // workers/render_video.py), so a failed backfill is silently dropped.
+  }
+}
+
+// Which stories' video plans reference this catalog id, restricted to
+// non-archived stories — an archived story's plan referencing a deleted asset
+// is not this app's problem to flag.
+export async function findMediaReferences(id: string): Promise<string[]> {
+  const index = await readStoryIndex();
+  const referencing: string[] = [];
+  for (const entry of index.stories) {
+    if (entry.archived) {
+      continue;
+    }
+    const plan = await readVideoPlanRaw(entry.id);
+    if (!plan) {
+      continue;
+    }
+    if (
+      plan.introMusicId === id ||
+      plan.sceneVideoId === id ||
+      plan.bgMusicId === id ||
+      plan.rainAmbienceId === id
+    ) {
+      referencing.push(entry.id);
+    }
+  }
+  return referencing;
+}
+
+export async function deleteMediaAsset(id: string, force = false): Promise<void> {
+  const library = await readMediaLibrary();
+  const asset = library.media.find((entry) => entry.id === id);
+  if (!asset) {
+    return;
+  }
+
+  if (!force) {
+    const referencedBy = await findMediaReferences(id);
+    if (referencedBy.length > 0) {
+      const error = new Error(
+        `Media "${id}" is referenced by ${referencedBy.length} story video plan(s)`,
+      ) as Error & { referencedBy?: string[] };
+      error.referencedBy = referencedBy;
+      throw error;
+    }
+  }
+
+  await writeMediaLibrary({ ...library, media: library.media.filter((entry) => entry.id !== id) });
+
+  try {
+    await fs.unlink(path.join(projectRoot, asset.path));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      throw error;
+    }
+  }
+}
+
+export function resolveMediaAssetFile(asset: MediaAsset): string {
+  return path.join(projectRoot, asset.path);
+}
+
+// --- Per-story video plan — the operator's reviewable/overridable picks from
+// the media catalog, plus the one true per-story input (the intro image).
+// See VIDEO_ASSEMBLY_PLAN.md §2.
+
+function videoPlanRelativePath(): string {
+  return 'video/plan.json';
+}
+
+async function readVideoPlanRaw(slug: string): Promise<VideoPlanFile | null> {
+  try {
+    return await readJsonFile<VideoPlanFile | null>(
+      resolveStoryPath(slug, videoPlanRelativePath()),
+      null,
+    );
+  } catch {
+    return null;
+  }
+}
+
+function pickRandom<T>(items: T[]): T | undefined {
+  if (items.length === 0) {
+    return undefined;
+  }
+  return items[Math.floor(Math.random() * items.length)];
+}
+
+async function buildDefaultVideoPlan(): Promise<VideoPlanFile> {
+  const [config, library] = await Promise.all([readVideoAppConfig(), readMediaLibrary()]);
+  const byCategory = (category: MediaCategory): MediaAsset[] =>
+    library.media.filter((asset) => asset.category === category);
+
+  const sceneVideo = pickRandom(byCategory('scene_video')) as VideoMediaAsset | undefined;
+  const introMusic = pickRandom(byCategory('intro_music')) as AudioMediaAsset | undefined;
+  const bgMusic = pickRandom(byCategory('bg_music')) as AudioMediaAsset | undefined;
+  const rainAmbience = pickRandom(byCategory('rain_ambience')) as AudioMediaAsset | undefined;
+
+  return {
+    schemaVersion: 1,
+    introImagePath: null,
+    introMusicId: introMusic?.id ?? null,
+    introDurationMs: config.introDurationMs,
+    introMusicGainDb: introMusic?.defaultGainDb ?? config.defaultGainDb.introMusic,
+    sceneVideoId: sceneVideo?.id ?? null,
+    bgMusicId: bgMusic?.id ?? null,
+    bgMusicGainDb: bgMusic?.defaultGainDb ?? config.defaultGainDb.bgMusic,
+    rainAmbienceId: rainAmbience?.id ?? null,
+    rainAmbienceGainDb: rainAmbience?.defaultGainDb ?? config.defaultGainDb.rainAmbience,
+    leadInMs: config.leadInMs,
+    tailOutMs: config.tailOutMs,
+    transitionMs: config.transitionMs,
+    duckingEnabled: true,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+export async function writeVideoPlan(slug: string, plan: VideoPlanFile): Promise<VideoPlanFile> {
+  const next = { ...plan, updatedAt: new Date().toISOString() };
+  await writeJsonFile(resolveStoryPath(slug, videoPlanRelativePath()), next);
+  return next;
+}
+
+// The first time a story's plan is requested with no plan.json on disk, seed
+// one by randomly picking a catalog item per category (a category with no
+// entries is left null) and persist it, so the pick is stable across reloads
+// instead of re-rolling on every read. Manual edits and the explicit
+// randomize action are the only things that change it after that.
+export async function readVideoPlanOrDefaults(slug: string): Promise<VideoPlanFile> {
+  const existing = await readVideoPlanRaw(slug);
+  if (existing) {
+    return existing;
+  }
+  const seeded = await buildDefaultVideoPlan();
+  return writeVideoPlan(slug, seeded);
+}
+
+export async function randomizeVideoPlan(slug: string): Promise<VideoPlanFile> {
+  const current = await readVideoPlanOrDefaults(slug);
+  const seeded = await buildDefaultVideoPlan();
+  return writeVideoPlan(slug, {
+    ...seeded,
+    // Non-catalog fields (timings, ducking) are the operator's own tuning —
+    // randomizing asset picks shouldn't silently reset them.
+    introDurationMs: current.introDurationMs,
+    leadInMs: current.leadInMs,
+    tailOutMs: current.tailOutMs,
+    transitionMs: current.transitionMs,
+    duckingEnabled: current.duckingEnabled,
+    introImagePath: current.introImagePath,
+  });
+}
+
+// --- Video render history — render_video.py never overwrites a previous
+// render; every job writes its own stories/[slug]/video/renders/<jobId>.mp4
+// + <jobId>.render.json. "Current" is just whichever one story.video.finalPath
+// happens to point at (freshly rendered ones become current automatically;
+// selectVideoRender below lets the operator point it at an older one instead).
+
+function videoRendersDir(slug: string): string {
+  return path.join(storyDir(slug), 'video', 'renders');
+}
+
+export async function listVideoRenders(slug: string): Promise<VideoRenderSummary[]> {
+  const story = await readStory(slug);
+  const rendersDir = videoRendersDir(slug);
+  const entries = await fs.readdir(rendersDir).catch(() => [] as string[]);
+  const jobIds = entries
+    .filter((entry) => entry.endsWith('.render.json'))
+    .map((entry) => entry.slice(0, -'.render.json'.length));
+
+  const summaries = await Promise.all(
+    jobIds.map(async (jobId): Promise<VideoRenderSummary | null> => {
+      const receipt = await readJsonFile<VideoRenderReceipt | null>(
+        path.join(rendersDir, `${jobId}.render.json`),
+        null,
+      );
+      if (!receipt) {
+        return null;
+      }
+      const isCurrent = story.video.finalPath === receipt.outputPath;
+      return {
+        jobId,
+        path: receipt.outputPath,
+        renderedAt: receipt.renderedAt,
+        durationMs: receipt.durationMs,
+        isCurrent,
+        isApproved: isCurrent && story.approvals.finalVideo.status === 'approved',
+        plan: receipt.plan,
+      };
+    }),
+  );
+
+  return summaries
+    .filter((summary): summary is VideoRenderSummary => summary !== null)
+    .sort((a, b) => b.renderedAt.localeCompare(a.renderedAt));
+}
+
+// Repoints story.video.finalPath at an older render instead of re-rendering —
+// always resets the finalVideo approval, since approving one rendered file
+// must never silently carry over to a different one the operator switches to.
+export async function selectVideoRender(slug: string, jobId: string): Promise<StoryRecord> {
+  const rendersDir = videoRendersDir(slug);
+  const receipt = await readJsonFile<VideoRenderReceipt | null>(
+    path.join(rendersDir, `${jobId}.render.json`),
+    null,
+  );
+  if (!receipt) {
+    throw new Error(`Unknown render: ${jobId}`);
+  }
+  if (!(await pathExists(resolveStoryPath(slug, receipt.outputPath)))) {
+    throw new Error(`Render file is missing on disk: ${receipt.outputPath}`);
+  }
+
+  return patchStory(slug, (story) => ({
+    ...story,
+    video: {
+      ...story.video,
+      finalPath: receipt.outputPath,
+      status: 'complete',
+      durationMs: receipt.durationMs,
+      renderedAt: receipt.renderedAt,
+    },
+    approvals: {
+      ...story.approvals,
+      finalVideo: { status: 'pending', approvedAt: null },
+    },
+  }));
+}
+
+export async function deleteVideoRender(slug: string, jobId: string): Promise<void> {
+  const story = await readStory(slug);
+  const rendersDir = videoRendersDir(slug);
+  const receiptPath = path.join(rendersDir, `${jobId}.render.json`);
+  const receipt = await readJsonFile<VideoRenderReceipt | null>(receiptPath, null);
+  if (!receipt) {
+    return;
+  }
+  if (story.video.finalPath === receipt.outputPath) {
+    throw new Error('Cannot delete the currently selected render — select a different version first');
+  }
+
+  await fs.unlink(resolveStoryPath(slug, receipt.outputPath)).catch((error) => {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      throw error;
+    }
+  });
+  await fs.unlink(receiptPath).catch(() => undefined);
 }
 
 export function isRunning(job: JobRecord): boolean {

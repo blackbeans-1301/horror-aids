@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { AudioLines, BookOpen, Settings } from 'lucide-react';
+import { AudioLines, BookOpen, Clapperboard, Settings } from 'lucide-react';
 
 import { ScrollButtons } from '@/features/stories/components/ScrollButtons';
 
@@ -21,6 +21,10 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
           <Link className="button secondary" href="/library">
             <BookOpen size={15} aria-hidden="true" />
             Thư viện truyện
+          </Link>
+          <Link className="button secondary" href="/media">
+            <Clapperboard size={15} aria-hidden="true" />
+            Media Library
           </Link>
           <Link className="button secondary" href="/settings">
             <Settings size={15} aria-hidden="true" />

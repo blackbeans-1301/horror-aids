@@ -1,6 +1,7 @@
 import 'server-only';
 
 import { spawn } from 'node:child_process';
+import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { configRoot, pythonExecutable, resolveStoryPath, workersRoot } from '@/lib/paths';
@@ -10,30 +11,51 @@ import {
   patchStory,
   readCharacters,
   readJobs,
+  readMediaLibrary,
   readSegments,
   readStory,
+  readVideoPlanOrDefaults,
+  resolveMediaAssetFile,
   updateJob,
   withJobsLock,
   writeJobs,
 } from '@/lib/json-store';
-import type { JobRecord, JobType } from '@/types/story';
+import type { JobRecord, JobType, MediaCategory } from '@/types/story';
 
 const workerScripts: Record<JobType, string> = {
   process_story: 'process_story.py',
   generate_verify_tts: 'generate_verify_tts.py',
   concat_audio: 'concat_audio.py',
+  render_video: 'render_video.py',
 };
+
+async function fileExists(absolutePath: string): Promise<boolean> {
+  try {
+    await fs.access(absolutePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 // TTS is the one job type that saturates the machine: every segment shells out
 // to omnivoice-tts, which loads the GGUF model and takes the GPU. Two stories
 // generating at once don't finish any sooner — they just halve each other's
 // throughput and double peak memory. So TTS jobs queue globally (across all
 // stories) instead of starting on demand; process_story and concat_audio are
-// cheap and still start immediately.
-const MAX_CONCURRENT_TTS_JOBS = Math.max(
-  1,
-  Number.parseInt(process.env.HORROR_AIDS_MAX_TTS_JOBS ?? '', 10) || 1,
-);
+// cheap and still start immediately. render_video gets its own independent
+// cap — x264 is CPU-bound, not GPU-bound, so it can genuinely run alongside a
+// TTS job without halving either one.
+const MAX_CONCURRENT_BY_TYPE: Partial<Record<JobType, number>> = {
+  generate_verify_tts: Math.max(
+    1,
+    Number.parseInt(process.env.HORROR_AIDS_MAX_TTS_JOBS ?? '', 10) || 1,
+  ),
+  render_video: Math.max(
+    1,
+    Number.parseInt(process.env.HORROR_AIDS_MAX_RENDER_JOBS ?? '', 10) || 1,
+  ),
+};
 
 function createJobId(): string {
   const date = new Date();
@@ -122,6 +144,75 @@ async function assertCanStartJob(
       throw new Error(`Segment ${unverified.id} is not verified`);
     }
   }
+
+  if (type === 'render_video') {
+    // The audio must be final and approved — rendering many minutes of video
+    // around narration the operator hasn't signed off on is pure waste, same
+    // gate concat_audio puts on verifiedAudio.
+    if (story.approvals.finalAudio.status !== 'approved') {
+      throw new Error('Final audio must be approved before rendering video');
+    }
+    if (!(await fileExists(resolveStoryPath(storyId, story.audio.finalPath)))) {
+      throw new Error('Final audio file is missing; re-run concat before rendering video');
+    }
+
+    const plan = await readVideoPlanOrDefaults(storyId);
+    if (!plan.introImagePath) {
+      throw new Error('Upload an intro image before rendering video');
+    }
+    if (!(await fileExists(resolveStoryPath(storyId, plan.introImagePath)))) {
+      throw new Error(`Intro image is missing: ${plan.introImagePath}`);
+    }
+
+    // Every referenced catalog id must resolve, in the right category, to a
+    // file that exists. null is a valid "omit this layer"; a dangling id is a
+    // broken choice and never renders — see VIDEO_ASSEMBLY_PLAN.md §5.
+    const { media } = await readMediaLibrary();
+    const byId = new Map(media.map((asset) => [asset.id, asset]));
+    const roles: Array<{
+      field: string;
+      id: string | null;
+      category: MediaCategory;
+      required: boolean;
+    }> = [
+      { field: 'sceneVideoId', id: plan.sceneVideoId, category: 'scene_video', required: true },
+      { field: 'introMusicId', id: plan.introMusicId, category: 'intro_music', required: false },
+      { field: 'bgMusicId', id: plan.bgMusicId, category: 'bg_music', required: false },
+      { field: 'rainAmbienceId', id: plan.rainAmbienceId, category: 'rain_ambience', required: false },
+    ];
+
+    for (const role of roles) {
+      if (!role.id) {
+        if (role.required) {
+          throw new Error(`Video plan needs a ${role.category.replace('_', ' ')} before rendering`);
+        }
+        continue;
+      }
+      const asset = byId.get(role.id);
+      if (!asset) {
+        throw new Error(
+          `Video plan references media "${role.id}" (${role.field}) which is no longer in the ` +
+            'library; pick a replacement in the Video tab',
+        );
+      }
+      if (asset.category !== role.category) {
+        throw new Error(`Media "${role.id}" is a ${asset.category}, not a ${role.category}`);
+      }
+      if (!(await fileExists(resolveMediaAssetFile(asset)))) {
+        throw new Error(`Media file for "${role.id}" is missing on disk: ${asset.path}`);
+      }
+    }
+
+    if (plan.introDurationMs < 3000 || plan.introDurationMs > 30000) {
+      throw new Error('Intro duration must be between 3s and 30s');
+    }
+    if (plan.leadInMs < 0 || plan.leadInMs > 10000) {
+      throw new Error('Lead-in must be between 0 and 10s');
+    }
+    if (plan.tailOutMs < 0 || plan.tailOutMs > 30000) {
+      throw new Error('Tail-out must be between 0 and 30s');
+    }
+  }
 }
 
 // The queue's own arguments live in the command array (that's what actually
@@ -163,6 +254,12 @@ async function launchJob(job: JobRecord): Promise<JobRecord> {
     }
     if (job.type === 'generate_verify_tts') {
       return { ...story, status: 'tts_running', audio: { ...story.audio, status: 'running' } };
+    }
+    if (job.type === 'render_video') {
+      // Deliberately does not move story.status (stays audio_complete) — same
+      // precedent as concat_audio, which has no "concat_running" status
+      // either. The ActiveJobBanner already communicates in-flight work.
+      return { ...story, video: { ...story.video, status: 'running' } };
     }
     return story;
   });
@@ -235,15 +332,18 @@ export async function pumpQueue(): Promise<void> {
         // spawn itself deliberately happens outside it.
         const claimed = await withJobsLock(async (): Promise<JobRecord | null> => {
           const { jobs } = await readJobs();
-          const runningTts = jobs.filter(
-            (job) => job.status === 'running' && job.type === 'generate_verify_tts',
-          ).length;
+          const runningCountByType = new Map<JobType, number>();
+          for (const job of jobs) {
+            if (job.status === 'running') {
+              runningCountByType.set(job.type, (runningCountByType.get(job.type) ?? 0) + 1);
+            }
+          }
           // New jobs are prepended, so the oldest queued one is last.
           const queued = jobs.filter((job) => job.status === 'pending').reverse();
-          const next = queued.find(
-            (job) =>
-              job.type !== 'generate_verify_tts' || runningTts < MAX_CONCURRENT_TTS_JOBS,
-          );
+          const next = queued.find((job) => {
+            const cap = MAX_CONCURRENT_BY_TYPE[job.type];
+            return cap === undefined || (runningCountByType.get(job.type) ?? 0) < cap;
+          });
           if (!next) {
             return null;
           }
@@ -366,7 +466,6 @@ export async function stopStoryJob(storyId: string): Promise<JobRecord> {
 export async function readJobLog(storyId: string, logPathFromJob: string): Promise<string> {
   const relativePath = logPathFromJob.replace(/^stories\/[^/]+\//, '');
   const logPath = resolveStoryPath(storyId, relativePath);
-  const fs = await import('node:fs/promises');
 
   try {
     return await fs.readFile(logPath, 'utf8');

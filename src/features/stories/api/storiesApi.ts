@@ -6,6 +6,7 @@ import type {
   StoryDetail,
   StoryIndexEntry,
   StoryRecord,
+  VideoPlanFile,
 } from '@/types/story';
 
 async function requestJson<T>(
@@ -122,6 +123,65 @@ export const storiesApi = {
 
   async revealFinalAudio(slug: string): Promise<void> {
     await requestJson(`/api/stories/${slug}/reveal-final-audio`, { method: 'POST' });
+  },
+
+  async videoPlan(slug: string): Promise<VideoPlanFile> {
+    const data = await requestJson<{ videoPlan: VideoPlanFile }>(`/api/stories/${slug}/video-plan`);
+    return data.videoPlan;
+  },
+
+  async saveVideoPlan(slug: string, patch: Partial<VideoPlanFile>): Promise<VideoPlanFile> {
+    const data = await requestJson<{ videoPlan: VideoPlanFile }>(`/api/stories/${slug}/video-plan`, {
+      method: 'PUT',
+      body: JSON.stringify(patch),
+    });
+    return data.videoPlan;
+  },
+
+  async randomizeVideoPlan(slug: string): Promise<VideoPlanFile> {
+    const data = await requestJson<{ videoPlan: VideoPlanFile }>(
+      `/api/stories/${slug}/video-plan/randomize`,
+      { method: 'POST' },
+    );
+    return data.videoPlan;
+  },
+
+  async uploadIntroImage(slug: string, file: File): Promise<VideoPlanFile> {
+    const form = new FormData();
+    form.set('file', file);
+    const response = await fetch(`/api/stories/${slug}/intro-image`, { method: 'POST', body: form });
+    const data = (await response.json()) as { videoPlan?: VideoPlanFile; error?: string };
+    if (!response.ok) {
+      throw new Error(data.error ?? 'Upload failed');
+    }
+    return data.videoPlan as VideoPlanFile;
+  },
+
+  async deleteIntroImage(slug: string): Promise<VideoPlanFile> {
+    const data = await requestJson<{ videoPlan: VideoPlanFile }>(`/api/stories/${slug}/intro-image`, {
+      method: 'DELETE',
+    });
+    return data.videoPlan;
+  },
+
+  async approveFinalVideo(slug: string): Promise<void> {
+    await requestJson(`/api/stories/${slug}/approve-final-video`, { method: 'POST' });
+  },
+
+  async revealFinalVideo(slug: string): Promise<void> {
+    await requestJson(`/api/stories/${slug}/reveal-final-video`, { method: 'POST' });
+  },
+
+  async selectVideoRender(slug: string, jobId: string): Promise<StoryRecord> {
+    const data = await requestJson<{ story: StoryRecord }>(
+      `/api/stories/${slug}/video-renders/${jobId}/select`,
+      { method: 'POST' },
+    );
+    return data.story;
+  },
+
+  async deleteVideoRender(slug: string, jobId: string): Promise<void> {
+    await requestJson(`/api/stories/${slug}/video-renders/${jobId}`, { method: 'DELETE' });
   },
 
   async syncFromLibrary(slug: string): Promise<void> {

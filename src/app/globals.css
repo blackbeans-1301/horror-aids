@@ -748,6 +748,12 @@ textarea:focus-visible {
   gap: 12px;
 }
 
+.modal.modal-lg {
+  width: min(640px, 100%);
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
 .player-transcript {
   font-size: 16px;
   line-height: 1.6;

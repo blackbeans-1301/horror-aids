@@ -16,6 +16,7 @@ const jobLabels: Record<JobType, string> = {
   process_story: 'Processing story',
   generate_verify_tts: 'Generating + verifying audio',
   concat_audio: 'Concatenating final WAV',
+  render_video: 'Rendering final video',
 };
 
 function formatElapsed(startedAt: string): string {

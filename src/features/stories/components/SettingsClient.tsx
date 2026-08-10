@@ -270,10 +270,6 @@ export const SettingsClient: React.FC = () => {
             <Link className="button secondary" href="/">
               Back
             </Link>
-            <button className="button secondary" type="button" onClick={() => void refresh()}>
-              <RefreshCw size={16} aria-hidden="true" />
-              Refresh
-            </button>
           </div>
         </div>
 

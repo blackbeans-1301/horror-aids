@@ -8,9 +8,18 @@ import type {
   JobType,
   SegmentRecord,
   StoryDetail,
+  VideoPlanFile,
 } from '@/types/story';
 
-export type TabId = 'overview' | 'story' | 'characters' | 'segments' | 'audio' | 'analytics' | 'logs';
+export type TabId =
+  | 'overview'
+  | 'story'
+  | 'characters'
+  | 'segments'
+  | 'audio'
+  | 'video'
+  | 'analytics'
+  | 'logs';
 
 function nextLocalSegmentId(segments: SegmentRecord[]): number {
   return (
@@ -49,15 +58,16 @@ export function useStoryWorkspace(slug: string) {
   const [storyText, setStoryText] = useState<string>('');
   const [characters, setCharacters] = useState<CharacterRecord[]>([]);
   const [segments, setSegments] = useState<SegmentRecord[]>([]);
+  const [videoPlan, setVideoPlan] = useState<VideoPlanFile | null>(null);
   const [selectedJobId, setSelectedJobId] = useState<string>('');
   const [jobLog, setJobLog] = useState<string>('');
   const [isBusy, setIsBusy] = useState<boolean>(false);
   // Unsaved local edits must survive the 3s polling refresh; each flag blocks
   // the server snapshot from overwriting that piece of state until saved.
-  const dirtyRef = useRef({ story: false, characters: false, segments: false });
+  const dirtyRef = useRef({ story: false, characters: false, segments: false, videoPlan: false });
   // Mirrors dirtyRef for the UI (refs don't trigger re-renders).
-  const [dirty, setDirty] = useState({ story: false, characters: false, segments: false });
-  type DirtyKey = 'story' | 'characters' | 'segments';
+  const [dirty, setDirty] = useState({ story: false, characters: false, segments: false, videoPlan: false });
+  type DirtyKey = 'story' | 'characters' | 'segments' | 'videoPlan';
   const markDirty = useCallback((key: DirtyKey): void => {
     dirtyRef.current[key] = true;
     setDirty((current) => ({ ...current, [key]: true }));
@@ -81,6 +91,9 @@ export function useStoryWorkspace(slug: string) {
       }
       if (!dirtyRef.current.segments) {
         setSegments(nextDetail.segments.segments);
+      }
+      if (!dirtyRef.current.videoPlan) {
+        setVideoPlan(nextDetail.videoPlan);
       }
       setSelectedJobId((current) => current || nextDetail.recentJobs[0]?.id || '');
       setLoadError('');
@@ -220,12 +233,22 @@ export function useStoryWorkspace(slug: string) {
 
   const segmentApproval = detail?.story.approvals.segments.status ?? 'pending';
   const verifiedApproval = detail?.story.approvals.verifiedAudio.status ?? 'pending';
+  const finalAudioApproval = detail?.story.approvals.finalAudio.status ?? 'pending';
   const hasActiveJob = detail?.activeJob !== null && detail?.activeJob !== undefined;
   const isArchived = detail?.story.archived ?? false;
   const canProcess = storyText.trim().length > 0 && !hasActiveJob && !isArchived;
   const canGenerate = segmentApproval === 'approved' && voicesReady && !hasActiveJob && !isArchived;
   const canConfirmVerified = allVerified && !hasActiveJob && !isArchived;
   const canConcat = verifiedApproval === 'approved' && !hasActiveJob && !isArchived;
+  // Full validation (catalog ids resolve, intro image exists, etc.) happens
+  // server-side in assertCanStartJob — this is just enough to keep the
+  // button in a sane disabled state before that round trip.
+  const canRenderVideo =
+    finalAudioApproval === 'approved' &&
+    Boolean(videoPlan?.introImagePath) &&
+    Boolean(videoPlan?.sceneVideoId) &&
+    !hasActiveJob &&
+    !isArchived;
 
   const runAction = useCallback(
     async (action: () => Promise<void>, successMessage = ''): Promise<void> => {
@@ -349,6 +372,76 @@ export function useStoryWorkspace(slug: string) {
   const revealFinalAudio = useCallback(async (): Promise<void> => {
     await runAction(() => storiesApi.revealFinalAudio(slug));
   }, [runAction, slug]);
+
+  const updateVideoPlan = useCallback((patch: Partial<VideoPlanFile>): void => {
+    markDirty('videoPlan');
+    setVideoPlan((current) => (current ? { ...current, ...patch } : current));
+  }, [markDirty]);
+
+  const saveVideoPlan = useCallback(async (): Promise<void> => {
+    if (!videoPlan) {
+      return;
+    }
+    await runAction(async () => {
+      const saved = await storiesApi.saveVideoPlan(slug, videoPlan);
+      setVideoPlan(saved);
+      clearDirty('videoPlan');
+    }, 'Video plan saved.');
+  }, [clearDirty, runAction, slug, videoPlan]);
+
+  const randomizeVideoPlan = useCallback(async (): Promise<void> => {
+    await runAction(async () => {
+      const next = await storiesApi.randomizeVideoPlan(slug);
+      setVideoPlan(next);
+      clearDirty('videoPlan');
+    }, 'Picked new media for this story — Render when ready.');
+  }, [clearDirty, runAction, slug]);
+
+  const uploadIntroImage = useCallback(async (file: File): Promise<void> => {
+    await runAction(async () => {
+      const next = await storiesApi.uploadIntroImage(slug, file);
+      setVideoPlan(next);
+      clearDirty('videoPlan');
+    }, 'Intro image uploaded.');
+  }, [clearDirty, runAction, slug]);
+
+  const deleteIntroImage = useCallback(async (): Promise<void> => {
+    await runAction(async () => {
+      const next = await storiesApi.deleteIntroImage(slug);
+      setVideoPlan(next);
+      clearDirty('videoPlan');
+    });
+  }, [clearDirty, runAction, slug]);
+
+  const approveFinalVideo = useCallback(async (): Promise<void> => {
+    await runAction(
+      () => storiesApi.approveFinalVideo(slug),
+      'Final video approved. This story is complete.',
+    );
+  }, [runAction, slug]);
+
+  const revealFinalVideo = useCallback(async (): Promise<void> => {
+    await runAction(() => storiesApi.revealFinalVideo(slug));
+  }, [runAction, slug]);
+
+  const selectVideoRender = useCallback(
+    async (jobId: string): Promise<void> => {
+      await runAction(
+        async () => {
+          await storiesApi.selectVideoRender(slug, jobId);
+        },
+        'Đã chuyển sang bản render này. Cần duyệt lại video trước khi hoàn tất.',
+      );
+    },
+    [runAction, slug],
+  );
+
+  const deleteVideoRender = useCallback(
+    async (jobId: string): Promise<void> => {
+      await runAction(() => storiesApi.deleteVideoRender(slug, jobId), 'Đã xoá bản render.');
+    },
+    [runAction, slug],
+  );
 
   const syncFromLibrary = useCallback(async (): Promise<void> => {
     await runAction(
@@ -524,6 +617,8 @@ export function useStoryWorkspace(slug: string) {
     },
     characters,
     segments,
+    videoPlan,
+    videoRenders: detail?.videoRenders ?? [],
     selectedJobId,
     selectedJob,
     jobLog,
@@ -551,6 +646,7 @@ export function useStoryWorkspace(slug: string) {
     canGenerate,
     canConfirmVerified,
     canConcat,
+    canRenderVideo,
     refresh,
     startJob,
     stopJob,
@@ -561,6 +657,15 @@ export function useStoryWorkspace(slug: string) {
     confirmVerifiedAudio,
     approveFinalAudio,
     revealFinalAudio,
+    updateVideoPlan,
+    saveVideoPlan,
+    randomizeVideoPlan,
+    uploadIntroImage,
+    deleteIntroImage,
+    approveFinalVideo,
+    revealFinalVideo,
+    selectVideoRender,
+    deleteVideoRender,
     syncFromLibrary,
     loadJobLog,
     updateCharacter,

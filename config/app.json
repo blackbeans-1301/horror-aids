@@ -39,5 +39,28 @@
       "releaseMs": 100,
       "makeupDb": 0
     }
+  },
+  "video": {
+    "width": 1920,
+    "height": 1080,
+    "fps": 30,
+    "encoder": "libx264",
+    "crf": 20,
+    "preset": "medium",
+    "videoBitrate": "6000k",
+    "audioBitrate": "192k",
+    "sampleRate": 48000,
+    "channels": 2,
+    "referenceLufs": -16,
+    "loudnorm": { "targetLufs": -16, "truePeakDb": -1.5, "loudnessRange": 11 },
+    "introDurationMs": 10000,
+    "introZoomEnabled": true,
+    "introZoomEndScale": 1.12,
+    "leadInMs": 800,
+    "tailOutMs": 4000,
+    "transitionMs": 1000,
+    "grade": { "brightness": -0.05, "saturation": 0.85, "vignette": true },
+    "ducking": { "enabled": true, "threshold": 0.05, "ratio": 6, "attackMs": 50, "releaseMs": 1000 },
+    "defaultGainDb": { "introMusic": -3, "bgMusic": -22, "rainAmbience": -26 }
   }
 }

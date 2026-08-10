@@ -12,6 +12,7 @@ const JOB_LABELS: Record<JobType, string> = {
   process_story: 'Process story',
   generate_verify_tts: 'Generate + verify TTS',
   concat_audio: 'Concat audio',
+  render_video: 'Render video',
 };
 
 function formatTimestamp(value: string | null): string {

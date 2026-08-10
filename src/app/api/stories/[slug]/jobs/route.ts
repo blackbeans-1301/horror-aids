@@ -16,6 +16,7 @@ const jobTypes = new Set<JobType>([
   'process_story',
   'generate_verify_tts',
   'concat_audio',
+  'render_video',
 ]);
 
 export async function POST(

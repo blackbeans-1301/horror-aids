@@ -188,8 +188,10 @@ export async function PUT(
         segments: { status: 'pending', approvedAt: null },
         verifiedAudio: { status: 'pending', approvedAt: null },
         finalAudio: { status: 'pending', approvedAt: null },
+        finalVideo: { status: 'pending', approvedAt: null },
       },
       audio: { ...story.audio, status: 'pending' },
+      video: { ...story.video, status: 'pending' },
     }));
   }
 

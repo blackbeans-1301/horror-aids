@@ -211,6 +211,32 @@ def resolve_voice_wav(project_root: Path, voice_id: str) -> Path:
     return wav_path
 
 
+def load_media_library(project_root: Path) -> dict[str, dict[str, Any]]:
+    """Read data/media/manifest.json (managed by the Next.js app) into {id: entry}."""
+    manifest_path = project_root / "data" / "media" / "manifest.json"
+    if not manifest_path.exists():
+        return {}
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    return {entry["id"]: entry for entry in data.get("media", [])}
+
+
+def resolve_media_asset(project_root: Path, asset_id: str, expected_category: str) -> dict[str, Any]:
+    """Resolve a media catalog id to its manifest entry, verifying category and
+    file presence. Raises with a message naming the id — this is the single
+    place render_video.py finds out a plan references something broken.
+    """
+    registry = load_media_library(project_root)
+    entry = registry.get(asset_id)
+    if not entry:
+        raise ValueError(f"unknown media id: {asset_id}")
+    if entry.get("category") != expected_category:
+        raise ValueError(f"media {asset_id} is a {entry.get('category')}, not a {expected_category}")
+    asset_path = (project_root / entry["path"]).resolve()
+    if not asset_path.exists():
+        raise ValueError(f"media file missing for {asset_id}: {asset_path}")
+    return entry
+
+
 # Sentinel "model" id that routes call_omnivoice() to the native omnivoice.cpp
 # CLI instead of the Python omnivoice package — see workers/omnivoice.cpp
 # (built locally, not part of this repo) and data/models/omnivoice-gguf/.

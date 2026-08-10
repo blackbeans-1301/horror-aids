@@ -1,7 +1,16 @@
 'use client';
 
 import Link from 'next/link';
-import { AudioLines, BarChart3, FileText, ListChecks, RefreshCw, Scissors, Terminal, Users } from 'lucide-react';
+import {
+  AudioLines,
+  BarChart3,
+  Clapperboard,
+  FileText,
+  ListChecks,
+  Scissors,
+  Terminal,
+  Users,
+} from 'lucide-react';
 import React from 'react';
 
 import { useConfirm } from '@/components/ConfirmDialog';
@@ -14,6 +23,7 @@ import { LogsTab } from '@/features/stories/components/workspace/LogsTab';
 import { OverviewTab } from '@/features/stories/components/workspace/OverviewTab';
 import { SegmentsTab } from '@/features/stories/components/workspace/SegmentsTab';
 import { StoryTab } from '@/features/stories/components/workspace/StoryTab';
+import { VideoTab } from '@/features/stories/components/workspace/VideoTab';
 import { type TabId, useStoryWorkspace } from '@/features/stories/hooks/useStoryWorkspace';
 import type { JobType } from '@/types/story';
 
@@ -27,6 +37,7 @@ const tabs: Array<{ id: TabId; label: string; icon: React.ReactNode }> = [
   { id: 'characters', label: 'Characters', icon: <Users size={15} aria-hidden="true" /> },
   { id: 'segments', label: 'Segments', icon: <Scissors size={15} aria-hidden="true" /> },
   { id: 'audio', label: 'Audio', icon: <AudioLines size={15} aria-hidden="true" /> },
+  { id: 'video', label: 'Video', icon: <Clapperboard size={15} aria-hidden="true" /> },
   { id: 'analytics', label: 'Analytics', icon: <BarChart3 size={15} aria-hidden="true" /> },
   { id: 'logs', label: 'Logs', icon: <Terminal size={15} aria-hidden="true" /> },
 ];
@@ -43,6 +54,8 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
     setStoryText,
     characters,
     segments,
+    videoPlan,
+    videoRenders,
     selectedJob,
     jobLog,
     isBusy,
@@ -69,7 +82,7 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
     canGenerate,
     canConfirmVerified,
     canConcat,
-    refresh,
+    canRenderVideo,
     startJob,
     stopJob,
     saveStory,
@@ -79,6 +92,15 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
     confirmVerifiedAudio,
     approveFinalAudio,
     revealFinalAudio,
+    updateVideoPlan,
+    saveVideoPlan,
+    randomizeVideoPlan,
+    uploadIntroImage,
+    deleteIntroImage,
+    approveFinalVideo,
+    revealFinalVideo,
+    selectVideoRender,
+    deleteVideoRender,
     syncFromLibrary,
     loadJobLog,
     updateCharacter,
@@ -136,6 +158,13 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
       await handleProcessStory();
       return;
     }
+    if (type === 'render_video') {
+      // render_video reads video/plan.json from disk — save unsaved edits
+      // first so it renders the picks actually shown on screen.
+      if (dirty.videoPlan) {
+        await saveVideoPlan();
+      }
+    }
     if (type === 'generate_verify_tts') {
       if (dirty.characters) {
         await saveCharacters();
@@ -178,17 +207,14 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
               <span className={allVerified ? 'badge good' : 'badge warn'}>
                 verified {allVerified ? 'passed' : 'pending'}
               </span>
-              <span className="badge">final {detail?.story.approvals.finalAudio.status ?? 'pending'}</span>
+              <span className="badge">final audio {detail?.story.approvals.finalAudio.status ?? 'pending'}</span>
+              <span className="badge">final video {detail?.story.approvals.finalVideo.status ?? 'pending'}</span>
             </p>
           </div>
           <div className="button-row">
             <Link className="button secondary" href="/">
               Back
             </Link>
-            <button className="button secondary" type="button" onClick={() => void refresh()}>
-              <RefreshCw size={16} aria-hidden="true" />
-              Refresh
-            </button>
           </div>
         </div>
 
@@ -313,6 +339,29 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
             onSegmentEnded={handleSegmentEnded}
             onPlayFromSegment={playFromSegment}
             onToggleSegmentFlag={(segmentId) => void toggleSegmentFlag(segmentId)}
+          />
+        ) : null}
+
+        {activeTab === 'video' ? (
+          <VideoTab
+            slug={slug}
+            videoPlan={videoPlan}
+            videoRenders={videoRenders}
+            isDirty={dirty.videoPlan}
+            isBusy={effectiveBusy}
+            canRenderVideo={canRenderVideo}
+            finalVideoExists={detail?.finalVideoExists ?? false}
+            finalVideoPath={detail?.story.video.finalPath ?? 'video/final.mp4'}
+            onUpdatePlan={updateVideoPlan}
+            onSavePlan={() => void saveVideoPlan()}
+            onRandomize={() => void randomizeVideoPlan()}
+            onUploadIntroImage={(file) => void uploadIntroImage(file)}
+            onDeleteIntroImage={() => void deleteIntroImage()}
+            onStartRender={() => void handleStartJob('render_video')}
+            onApproveFinalVideo={() => void approveFinalVideo()}
+            onRevealFinalVideo={() => void revealFinalVideo()}
+            onSelectRender={(jobId) => void selectVideoRender(jobId)}
+            onDeleteRender={(jobId) => void deleteVideoRender(jobId)}
           />
         ) : null}
 

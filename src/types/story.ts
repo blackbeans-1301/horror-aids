@@ -8,6 +8,7 @@ export type StoryStatus =
   | 'audio_validation'
   | 'ready_to_concat'
   | 'audio_complete'
+  | 'video_complete'
   | 'failed';
 
 export type ApprovalStatus = 'pending' | 'approved' | 'rejected';
@@ -48,7 +49,7 @@ export type VerificationStatus =
   | 'failed'
   | 'max_attempts_reached';
 
-export type JobType = 'process_story' | 'generate_verify_tts' | 'concat_audio';
+export type JobType = 'process_story' | 'generate_verify_tts' | 'concat_audio' | 'render_video';
 
 export type JobStatus =
   | 'pending'
@@ -108,11 +109,22 @@ export interface StoryRecord {
       status: ApprovalStatus;
       approvedAt: string | null;
     };
+    finalVideo: {
+      status: ApprovalStatus;
+      approvedAt: string | null;
+    };
   };
   audio: {
     segmentsDir: string;
     finalPath: string;
     status: 'pending' | 'running' | 'verified' | 'complete' | 'failed';
+  };
+  video: {
+    planPath: string;
+    finalPath: string;
+    status: 'pending' | 'running' | 'complete' | 'failed';
+    durationMs: number | null;
+    renderedAt: string | null;
   };
 }
 
@@ -182,6 +194,103 @@ export interface VoicesFile {
   voices: VoiceRecord[];
 }
 
+export type MediaCategory = 'bg_music' | 'rain_ambience' | 'intro_music' | 'scene_video';
+
+export interface MediaAssetBase {
+  id: string;
+  category: MediaCategory;
+  name: string;
+  // Project-root-relative POSIX path, same shape as VoiceRecord.wavPath.
+  path: string;
+  loopable: boolean;
+  durationMs: number | null;
+  source: string;
+  notes: string;
+  addedAt: string;
+}
+
+export interface AudioMediaAsset extends MediaAssetBase {
+  category: 'bg_music' | 'rain_ambience' | 'intro_music';
+  // EBU R128 integrated loudness measured at ingest; null when ffmpeg was unavailable.
+  integratedLufs: number | null;
+  defaultGainDb: number;
+}
+
+export interface VideoMediaAsset extends MediaAssetBase {
+  category: 'scene_video';
+  width: number | null;
+  height: number | null;
+  fps: number | null;
+  hasAudioStream: boolean;
+}
+
+export type MediaAsset = AudioMediaAsset | VideoMediaAsset;
+
+export interface MediaLibraryFile {
+  schemaVersion: number;
+  media: MediaAsset[];
+}
+
+export interface VideoPlanFile {
+  schemaVersion: number;
+  // Story-relative path to the operator's uploaded intro image; null until uploaded.
+  introImagePath: string | null;
+  introMusicId: string | null;
+  introDurationMs: number;
+  introMusicGainDb: number;
+  sceneVideoId: string | null;
+  bgMusicId: string | null;
+  bgMusicGainDb: number;
+  rainAmbienceId: string | null;
+  rainAmbienceGainDb: number;
+  leadInMs: number;
+  tailOutMs: number;
+  transitionMs: number;
+  duckingEnabled: boolean;
+  updatedAt: string;
+}
+
+export interface VideoRenderReceiptAsset {
+  role: 'scene_video' | 'bg_music' | 'rain_ambience' | 'intro_music' | 'intro_image';
+  id: string | null;
+  path: string;
+  source: string;
+  appliedGainDb: number | null;
+}
+
+export interface VideoRenderReceipt {
+  jobId: string;
+  renderedAt: string;
+  outputPath: string;
+  durationMs: number;
+  introDurationMs: number;
+  narrationDurationMs: number;
+  width: number;
+  height: number;
+  fps: number;
+  encoder: string;
+  loudnessTargetLufs: number;
+  assets: VideoRenderReceiptAsset[];
+  // Full plan snapshot at render time — lets a later "which config produced
+  // this?" question be answered without guessing.
+  plan: VideoPlanFile;
+}
+
+// One entry per past render job, read back from stories/[slug]/video/renders/
+// — each render is kept (never overwritten), so switching plan settings and
+// re-rendering to compare no longer clobbers the previous attempt.
+export interface VideoRenderSummary {
+  jobId: string;
+  path: string;
+  renderedAt: string;
+  durationMs: number;
+  // Whether story.video.finalPath currently points at this render.
+  isCurrent: boolean;
+  // isCurrent && approvals.finalVideo.status === 'approved'.
+  isApproved: boolean;
+  plan: VideoPlanFile;
+}
+
 export interface JobTypeAnalytics {
   type: JobType;
   runs: number;
@@ -214,6 +323,9 @@ export interface StoryDetail {
   activeJob: JobRecord | null;
   recentJobs: JobRecord[];
   finalAudioExists: boolean;
+  videoPlan: VideoPlanFile;
+  finalVideoExists: boolean;
+  videoRenders: VideoRenderSummary[];
   analytics: StoryAnalytics;
 }
 

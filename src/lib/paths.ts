@@ -8,6 +8,18 @@ export const workersRoot = path.join(projectRoot, 'workers');
 export const configRoot = path.join(projectRoot, 'config');
 export const voicePreviewCacheRoot = path.join(dataRoot, 'voice-preview-cache');
 
+// Shared media catalog (background music, rain ambience, intro music, scene
+// video) used by the video-assembly stage — nowhere else joins 'data' and
+// 'media' directly, so this is the one place a future workspace-isolation
+// migration (see docs/Specification Documents/09_WORKSPACE_ISOLATION_SPEC.md)
+// needs to touch to relocate it.
+export const mediaRoot = path.join(dataRoot, 'media');
+export const mediaManifestPath = path.join(mediaRoot, 'manifest.json');
+
+export function mediaCategoryDir(category: string): string {
+  return path.join(mediaRoot, category);
+}
+
 // The horror-stories writing repo, checked out as a git submodule. horror-aids
 // only ever reads from it (plus `git pull` to refresh) — it's a pure data
 // source, not something this app commits to. Lifecycle status lives in this
