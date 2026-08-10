@@ -206,10 +206,23 @@ async function reconcileStoryAfterStaleJob(job: JobRecord): Promise<void> {
   }));
 }
 
+// A job records its pid within milliseconds of spawning. One still holding
+// null well after that never got a process at all — the server died between
+// claiming the job and spawning it. Left alone it blocks its story forever,
+// and for a TTS job it also holds a slot in the global queue, stalling every
+// other story behind it.
+const MISSING_PID_GRACE_MS = 60_000;
+
 async function reconcileStaleJobs(jobs: JobsFile): Promise<JobsFile> {
-  const stale = jobs.jobs.filter(
-    (job) => job.status === 'running' && job.pid != null && !isProcessAlive(job.pid),
-  );
+  const stale = jobs.jobs.filter((job) => {
+    if (job.status !== 'running') {
+      return false;
+    }
+    if (job.pid == null) {
+      return Date.now() - new Date(job.startedAt).getTime() > MISSING_PID_GRACE_MS;
+    }
+    return !isProcessAlive(job.pid);
+  });
   if (stale.length === 0) {
     return jobs;
   }
@@ -236,21 +249,44 @@ export async function writeJobs(jobs: JobsFile): Promise<void> {
   await writeJsonFile(jobsPath, jobs);
 }
 
+// data/jobs.json is mutated from several independent async paths — enqueueing
+// a job, recording its pid, the queue pump claiming the next job, and every
+// child's exit handler. Each is a read → await → write cycle, so two of them
+// interleaving silently drops one update: a finished job stuck on "running"
+// forever, or a queued job claimed twice and spawned twice. Every mutation
+// goes through this chain so they run one at a time.
+//
+// NOT reentrant: code already holding the lock must use readJobs/writeJobs
+// directly rather than calling back into updateJob.
+let jobsMutation: Promise<unknown> = Promise.resolve();
+
+export function withJobsLock<T>(operation: () => Promise<T>): Promise<T> {
+  const next = jobsMutation.then(operation, operation);
+  jobsMutation = next.then(
+    () => undefined,
+    () => undefined,
+  );
+  return next;
+}
+
 export async function updateJob(
   jobId: string,
-  patch: Partial<Pick<JobRecord, 'status' | 'pid' | 'finishedAt' | 'error'>>,
+  patch: Partial<Pick<JobRecord, 'status' | 'pid' | 'startedAt' | 'finishedAt' | 'error'>>,
 ): Promise<void> {
-  const jobs = await readJobs();
-  const updatedJobs = jobs.jobs.map((job) =>
-    job.id === jobId ? { ...job, ...patch } : job,
-  );
-  await writeJobs({ jobs: updatedJobs });
+  await withJobsLock(async () => {
+    const jobs = await readJobs();
+    const updatedJobs = jobs.jobs.map((job) =>
+      job.id === jobId ? { ...job, ...patch } : job,
+    );
+    await writeJobs({ jobs: updatedJobs });
+  });
 }
 
 export async function createStory(input: {
   title: string;
   sourceType?: SourceType;
   storyText?: string;
+  sourceContentId?: string | null;
 }): Promise<StoryRecord> {
   await ensureDataFiles();
   const now = new Date().toISOString();
@@ -285,6 +321,7 @@ export async function createStory(input: {
     updatedAt: now,
     archived: false,
     archivedAt: null,
+    sourceContentId: input.sourceContentId ?? null,
     text: {
       storyPath: 'text/story.md',
       charactersPath: 'text/characters.json',
@@ -297,7 +334,7 @@ export async function createStory(input: {
     },
     audio: {
       segmentsDir: 'audio/segments',
-      finalPath: 'audio/final.wav',
+      finalPath: 'audio/final.m4a',
       status: 'pending',
     },
   };
@@ -329,6 +366,7 @@ export async function createStory(input: {
     updatedAt: story.updatedAt,
     archived: story.archived,
     archivedAt: story.archivedAt,
+    sourceContentId: story.sourceContentId,
   };
   await writeStoryIndex({ stories: [entry, ...index.stories] });
 
@@ -340,8 +378,14 @@ export async function readStory(slug: string): Promise<StoryRecord> {
   if (!story) {
     throw new Error(`Story not found: ${slug}`);
   }
-  // Stories created before the archive feature shipped have no archived/archivedAt fields on disk.
-  return { ...story, archived: story.archived ?? false, archivedAt: story.archivedAt ?? null };
+  // Stories created before the archive/library-import features shipped have no
+  // archived/archivedAt/sourceContentId fields on disk.
+  return {
+    ...story,
+    archived: story.archived ?? false,
+    archivedAt: story.archivedAt ?? null,
+    sourceContentId: story.sourceContentId ?? null,
+  };
 }
 
 async function writeStory(story: StoryRecord): Promise<void> {
@@ -359,6 +403,7 @@ async function writeStory(story: StoryRecord): Promise<void> {
             updatedAt: updatedStory.updatedAt,
             archived: updatedStory.archived,
             archivedAt: updatedStory.archivedAt,
+            sourceContentId: updatedStory.sourceContentId,
           }
         : entry,
     ),
@@ -475,7 +520,10 @@ export async function getStoryDetail(slug: string): Promise<StoryDetail> {
   const storyJobs = jobs.jobs
     .filter((job) => job.storyId === slug)
     .sort((a, b) => b.startedAt.localeCompare(a.startedAt));
-  const activeJob = storyJobs.find((job) => job.status === 'running') ?? null;
+  // isRunning covers "pending" too: a job waiting in the global TTS queue is
+  // just as much this story's active job — the UI has to show it and keep the
+  // run buttons disabled, or the user re-clicks and gets a rejected start.
+  const activeJob = storyJobs.find((job) => isRunning(job)) ?? null;
   const finalAudioExists = await pathExists(resolveStoryPath(slug, story.audio.finalPath));
 
   return {
@@ -493,8 +541,14 @@ export async function getStoryDetail(slug: string): Promise<StoryDetail> {
 export async function listStories(): Promise<StoryIndexEntry[]> {
   const index = await readStoryIndex();
   return index.stories
-    // Entries created before the archive feature shipped have no archived/archivedAt fields on disk.
-    .map((entry) => ({ ...entry, archived: entry.archived ?? false, archivedAt: entry.archivedAt ?? null }))
+    // Entries created before the archive/library-import features shipped have no
+    // archived/archivedAt/sourceContentId fields on disk.
+    .map((entry) => ({
+      ...entry,
+      archived: entry.archived ?? false,
+      archivedAt: entry.archivedAt ?? null,
+      sourceContentId: entry.sourceContentId ?? null,
+    }))
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
@@ -506,10 +560,10 @@ export async function writeWorkerResult(
   await writeJsonFile(resolveStoryPath(slug, resultPath), result);
 }
 
-export async function getAsset(slug: string, relativePath: string): Promise<{
-  data: Buffer;
+export function resolveAudioAsset(slug: string, relativePath: string): {
+  absolutePath: string;
   contentType: string;
-}> {
+} {
   const resolved = resolveStoryPath(slug, relativePath);
   // resolveStoryPath only guards against escaping the story folder root; this
   // route is documented as audio-only, so also confirm the resolved path is
@@ -520,11 +574,17 @@ export async function getAsset(slug: string, relativePath: string): Promise<{
   if (resolved !== audioRoot && !resolved.startsWith(`${audioRoot}${path.sep}`)) {
     throw new Error('Only audio assets can be served');
   }
-  const data = await fs.readFile(resolved);
   const extension = path.extname(resolved).toLowerCase();
-  const contentType = extension === '.wav' ? 'audio/wav' : 'application/octet-stream';
+  const contentType =
+    extension === '.wav'
+      ? 'audio/wav'
+      : extension === '.mp3'
+        ? 'audio/mpeg'
+        : extension === '.m4a'
+          ? 'audio/mp4'
+          : 'application/octet-stream';
 
-  return { data, contentType };
+  return { absolutePath: resolved, contentType };
 }
 
 export function nextSegmentId(segments: SegmentRecord[]): string {

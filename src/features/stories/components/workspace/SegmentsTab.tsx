@@ -9,6 +9,7 @@ interface SegmentsTabProps {
   characters: CharacterRecord[];
   voicesReady: boolean;
   isBusy: boolean;
+  hasActiveJob: boolean;
   onUpdateSegment: (index: number, patch: Partial<SegmentRecord>) => void;
   onAddSegment: () => void;
   onInsertSegmentAfter: (index: number) => void;
@@ -25,6 +26,7 @@ export const SegmentsTab: React.FC<SegmentsTabProps> = ({
   characters,
   voicesReady,
   isBusy,
+  hasActiveJob,
   onUpdateSegment,
   onAddSegment,
   onInsertSegmentAfter,
@@ -66,7 +68,17 @@ export const SegmentsTab: React.FC<SegmentsTabProps> = ({
           <button className="button secondary" type="button" onClick={onAddSegment}>
             Add segment
           </button>
-          <button className="button secondary" type="button" onClick={onSaveSegments} disabled={isBusy}>
+          <button
+            className="button secondary"
+            type="button"
+            onClick={onSaveSegments}
+            disabled={isBusy || hasActiveJob}
+            title={
+              hasActiveJob
+                ? 'A TTS job is running for this story — wait for it to finish (or stop it) before saving segment edits'
+                : undefined
+            }
+          >
             <Save size={16} aria-hidden="true" />
             Save segments
           </button>
@@ -84,6 +96,12 @@ export const SegmentsTab: React.FC<SegmentsTabProps> = ({
       {segments.length > 0 && !voicesReady ? (
         <p className="label">
           Disabled because some speakers have no voice yet. Assign an OmniVoice voice to every used speaker in the Characters tab, then save.
+        </p>
+      ) : null}
+      {hasActiveJob ? (
+        <p className="label">
+          A TTS job is running for this story — saving is disabled until it finishes (or you stop
+          it), so edits made mid-run don&apos;t end up out of sync with audio it just generated.
         </p>
       ) : null}
       <div className="table-wrap">

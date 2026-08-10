@@ -38,6 +38,7 @@ function createEmptySegment(order: number, speakerId = 'narrator'): SegmentRecor
       lastError: null,
       transcriptPreview: null,
     },
+    flagged: false,
   };
 }
 
@@ -296,6 +297,34 @@ export function useStoryWorkspace(slug: string) {
     }, 'Segments saved.');
   }, [clearDirty, runAction, segments, slug]);
 
+  // Flag toggling persists immediately through its own endpoint (instead of
+  // routing through markDirty/saveSegments) because the full segments PUT
+  // resets the story's approval status — a flag is just a review note and
+  // shouldn't invalidate already-approved segments/audio.
+  const toggleSegmentFlag = useCallback(
+    async (segmentId: string): Promise<void> => {
+      const target = segments.find((segment) => segment.id === segmentId);
+      if (!target) {
+        return;
+      }
+      const flagged = !target.flagged;
+      setSegments((current) =>
+        current.map((segment) => (segment.id === segmentId ? { ...segment, flagged } : segment)),
+      );
+      try {
+        await storiesApi.setSegmentFlag(slug, segmentId, flagged);
+      } catch (error) {
+        setSegments((current) =>
+          current.map((segment) =>
+            segment.id === segmentId ? { ...segment, flagged: !flagged } : segment,
+          ),
+        );
+        toast.error(error instanceof Error ? error.message : 'Could not update flag');
+      }
+    },
+    [segments, slug],
+  );
+
   const approveSegments = useCallback(async (): Promise<void> => {
     await runAction(
       () => storiesApi.approveSegments(slug),
@@ -314,6 +343,17 @@ export function useStoryWorkspace(slug: string) {
     await runAction(
       () => storiesApi.approveFinalAudio(slug),
       'Final audio approved. This story is complete.',
+    );
+  }, [runAction, slug]);
+
+  const revealFinalAudio = useCallback(async (): Promise<void> => {
+    await runAction(() => storiesApi.revealFinalAudio(slug));
+  }, [runAction, slug]);
+
+  const syncFromLibrary = useCallback(async (): Promise<void> => {
+    await runAction(
+      () => storiesApi.syncFromLibrary(slug),
+      'Đã đồng bộ lại nội dung từ Thư viện. Tiến độ duyệt đã được reset về draft.',
     );
   }, [runAction, slug]);
 
@@ -520,6 +560,8 @@ export function useStoryWorkspace(slug: string) {
     approveSegments,
     confirmVerifiedAudio,
     approveFinalAudio,
+    revealFinalAudio,
+    syncFromLibrary,
     loadJobLog,
     updateCharacter,
     addCharacter,
@@ -530,6 +572,7 @@ export function useStoryWorkspace(slug: string) {
     deleteSegment,
     splitSegment,
     mergeWithNext,
+    toggleSegmentFlag,
   };
 }
 

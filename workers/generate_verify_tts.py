@@ -196,6 +196,10 @@ def main() -> int:
     pending: list[tuple[dict[str, Any], dict[str, Any]]] = []
     generated_count = 0
 
+    def has_audio(segment: dict[str, Any]) -> bool:
+        audio_path = ctx.resolve(segment["audioPath"])
+        return audio_path.exists() and audio_path.stat().st_size > 0
+
     for segment in segments_file["segments"]:
         if segment.get("status") == "skipped":
             updated_segments.append(segment)
@@ -205,17 +209,32 @@ def main() -> int:
             updated_segments.append(segment)
             continue
 
-        # A full (non-targeted) run resumes rather than restarts: a segment
-        # already complete and passed from an earlier run (or one this run
-        # was stopped partway through) is left untouched. Use "Regenerate
-        # selected" for a specific segment to force it even if it passed.
-        if (
-            not target_ids
-            and segment.get("status") == "complete"
-            and segment.get("verification", {}).get("status") == "passed"
-        ):
-            updated_segments.append(segment)
-            continue
+        if not target_ids:
+            # A full (non-targeted) run resumes rather than restarts, and what
+            # counts as "already done" is the WAV actually sitting on disk plus
+            # a passed verification — NOT segment["status"]. Approving segments
+            # rewrites every status to "ready", and the user has to re-approve
+            # after each text edit, so keying the resume off "complete" made a
+            # full run restart from segment 0001 every time. Use "Regenerate
+            # selected" to force a specific segment that is already done.
+            verified = segment.get("verification", {}).get("status") == "passed"
+            if verified and has_audio(segment):
+                # Heal a status that re-approval rewrote, so the rest of the
+                # pipeline and the UI agree with the audio on disk.
+                segment["status"] = "complete"
+                updated_segments.append(segment)
+                continue
+            if verified:
+                # Verification says passed but the audio is gone (deleted, or
+                # the speaker changed the path): this is a fresh generation, so
+                # don't let a stale attempt counter push it straight into
+                # "max attempts reached" without ever generating.
+                segment["verification"] = {
+                    "status": "pending",
+                    "attempts": 0,
+                    "lastError": None,
+                    "transcriptPreview": None,
+                }
 
         if target_ids:
             # A targeted regenerate starts fresh instead of resuming a counter
@@ -276,12 +295,32 @@ def main() -> int:
         return passed
 
     def flush_segments() -> None:
-        # updated_segments holds every segment (processed or not) as a live
-        # reference, so writing it at any point is an accurate snapshot.
         # Called after each segment instead of once at the end of main() so a
         # hard kill (crash, OOM, the app server restarting) doesn't throw
         # away completed segments whose audio is already sitting on disk.
-        ctx.write_json(story["text"]["segmentsPath"], {"segments": updated_segments})
+        #
+        # updated_segments is a snapshot loaded when this job started — but
+        # the user can edit and save a segment's text/speaker/emotion/order
+        # through the UI while this job is still running. Overwriting the
+        # whole file with that stale snapshot would silently discard those
+        # edits. So merge onto whatever is on disk *right now*: this job only
+        # owns status/verification, everything else comes from disk.
+        job_updates = {segment["id"]: segment for segment in updated_segments}
+        disk_segments_file = ctx.read_json(story["text"]["segmentsPath"], {"segments": []})
+        merged = []
+        for disk_segment in disk_segments_file.get("segments", []):
+            job_segment = job_updates.get(disk_segment["id"])
+            if job_segment is None:
+                merged.append(disk_segment)
+                continue
+            merged.append(
+                {
+                    **disk_segment,
+                    "status": job_segment["status"],
+                    "verification": job_segment["verification"],
+                }
+            )
+        ctx.write_json(story["text"]["segmentsPath"], {"segments": merged})
 
     # Pass 1: generate every pending segment, then verify them all with a
     # single Whisper invocation (one model load instead of one per segment).
@@ -294,7 +333,11 @@ def main() -> int:
             ctx.log("stop requested; halting further generation for this run")
             break
         attempts = int(segment.get("verification", {}).get("attempts") or 0)
-        if attempts >= max_attempts:
+        # The attempt counter only bounds *verification* retries. With
+        # verification off, generation either raises or succeeds, so a segment
+        # that was stopped mid-run a few times must not be locked out of ever
+        # being generated.
+        if verify_enabled and attempts >= max_attempts:
             retry_queue.append((segment, character))
             continue
         try:
@@ -419,8 +462,7 @@ def main() -> int:
         and segment.get("verification", {}).get("status") != "passed"
     )
 
-    segments_file["segments"] = updated_segments
-    ctx.write_json(story["text"]["segmentsPath"], segments_file)
+    flush_segments()
     if unresolved == 0:
         story["status"] = "tts_verified"
         story["audio"]["status"] = "verified"

@@ -23,5 +23,21 @@
     "sampleRate": 22050,
     "channels": 1,
     "segmentGapMs": 500
+  },
+  "mastering": {
+    "audioBitrate": "96k",
+    "ditherMethod": "triangular",
+    "pitchShiftPercent": 1.0,
+    "highPassHz": 80,
+    "lowPassHz": 15000,
+    "dynamicEq": {
+      "centerHz": 3000,
+      "bandwidthHz": 2000,
+      "thresholdDb": -18,
+      "ratio": 2.0,
+      "attackMs": 10,
+      "releaseMs": 100,
+      "makeupDb": 0
+    }
   }
 }

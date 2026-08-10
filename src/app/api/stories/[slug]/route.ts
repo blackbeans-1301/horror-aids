@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 
+import { pumpQueue } from '@/lib/job-runner';
 import { getStoryDetail, patchStory } from '@/lib/json-store';
 
 interface StoryRouteContext {
@@ -18,6 +19,11 @@ export async function GET(
 ): Promise<NextResponse> {
   const { slug } = await context.params;
   try {
+    // The queue lives in this process, so an app-server restart leaves queued
+    // jobs with nobody to start them. The workspace polls this route every few
+    // seconds; piggybacking the pump on it makes the queue self-healing at the
+    // cost of one jobs.json read.
+    void pumpQueue();
     const detail = await getStoryDetail(slug);
     return NextResponse.json(detail);
   } catch (error) {

@@ -59,7 +59,7 @@ Worker must:
 
 Job status:
 
-- `pending`
+- `pending` — accepted and queued, no process spawned yet. Every job starts here; only `generate_verify_tts` can stay here for any length of time (see Job Queue below).
 - `running`
 - `needs_review`
 - `complete`
@@ -71,6 +71,19 @@ Job types:
 - `process_story`
 - `generate_verify_tts`
 - `concat_audio`
+
+## Job Queue
+
+Jobs are queued in the app process, not started on demand.
+
+- **One active job per story**, as before: a story with a `pending` or `running` job rejects new job starts.
+- **One `generate_verify_tts` job at a time across all stories.** TTS saturates the machine — every segment shells out to `omnivoice-tts`, which loads the GGUF model and takes the GPU — so two stories generating at once halve each other's throughput and double peak memory for no gain. Additional TTS jobs stay `pending` and start automatically when a slot frees. Override with `HORROR_AIDS_MAX_TTS_JOBS`.
+- **`process_story` and `concat_audio` are never queued.** They are cheap and do not contend for the GPU.
+- **Queued jobs are re-validated at launch, not only at enqueue.** A job can wait hours, during which the operator may edit segments (resetting the approval) or remove a character's voice. A job that is no longer startable is marked `failed` with the reason rather than spawning a worker that would certainly raise.
+- **Stopping a `pending` job** removes it from the queue; there is no process to signal.
+- **`startedAt` is stamped when the job starts running**, not when it is queued, so it measures the run rather than the wait.
+- **Orphaned jobs are reconciled on read**: a `running` job whose pid is dead — or which still has no pid more than 60s after starting — is marked `failed`, and for TTS the story's status is recomputed from the segments that actually finished. Without this, one orphan would block its story forever and hold a queue slot against every other story.
+- **`data/jobs.json` mutations are serialised** in-process. Enqueue, pid recording, queue claims and exit handlers are all read-modify-write cycles; unserialised, two of them interleaving drops an update — a finished job left `running`, or a queued job spawned twice.
 
 ## MVP Workers
 
@@ -128,7 +141,7 @@ Rules:
 - No API key or network call — OmniVoice is a local Python model loaded from `workers/.venv`.
 - Generate one audio file per segment.
 - Skip segments marked `skipped`.
-- A full (non-targeted) "Generate + verify" run resumes rather than restarts: segments already `complete`/`passed` are left untouched, and only pending/failed segments are (re)processed. Use an explicit `--segments` regenerate request to force a specific segment even if it already passed.
+- A full (non-targeted) "Generate + verify" run resumes rather than restarts. "Already done" means **the segment's WAV exists on disk and its verification passed** — deliberately not `status == "complete"`, because approving segments rewrites every status to `ready`, and the operator has to re-approve after each text edit. Keying the resume off `status` made a full run restart from segment 0001 after every edit. A segment whose verification passed but whose audio file is missing is regenerated with a reset attempt counter. Use an explicit `--segments` regenerate request to force a segment that is already done.
 - Log model repo/device/voice ID/segment ID — there is no secret to withhold.
 - `HORROR_AIDS_FAKE_TTS=1` (or unset, since it defaults on) generates a placeholder tone WAV instead of running the real model, for fast local development without downloading weights.
 

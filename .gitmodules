@@ -1,3 +1,6 @@
 [submodule ".ai"]
 	path = .ai
 	url = git@github.com:blackbeans-1301/dot-ai.git
+[submodule "content/horror-stories"]
+	path = content/horror-stories
+	url = git@github.com:blackbeans-1301/horror-stories.git

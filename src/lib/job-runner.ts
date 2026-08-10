@@ -13,6 +13,7 @@ import {
   readSegments,
   readStory,
   updateJob,
+  withJobsLock,
   writeJobs,
 } from '@/lib/json-store';
 import type { JobRecord, JobType } from '@/types/story';
@@ -22,6 +23,17 @@ const workerScripts: Record<JobType, string> = {
   generate_verify_tts: 'generate_verify_tts.py',
   concat_audio: 'concat_audio.py',
 };
+
+// TTS is the one job type that saturates the machine: every segment shells out
+// to omnivoice-tts, which loads the GGUF model and takes the GPU. Two stories
+// generating at once don't finish any sooner — they just halve each other's
+// throughput and double peak memory. So TTS jobs queue globally (across all
+// stories) instead of starting on demand; process_story and concat_audio are
+// cheap and still start immediately.
+const MAX_CONCURRENT_TTS_JOBS = Math.max(
+  1,
+  Number.parseInt(process.env.HORROR_AIDS_MAX_TTS_JOBS ?? '', 10) || 1,
+);
 
 function createJobId(): string {
   const date = new Date();
@@ -37,9 +49,14 @@ async function assertCanStartJob(
   storyId: string,
   type: JobType,
   segmentIds?: string[],
+  // Set when re-checking a job that is already queued: that job is itself
+  // "active" for this story, so it must not block its own launch.
+  ignoreJobId?: string,
 ): Promise<void> {
   const jobs = await readJobs();
-  const active = jobs.jobs.find((job) => job.storyId === storyId && isRunning(job));
+  const active = jobs.jobs.find(
+    (job) => job.storyId === storyId && job.id !== ignoreJobId && isRunning(job),
+  );
 
   if (active) {
     throw new Error(`Story already has active job ${active.id}`);
@@ -107,32 +124,168 @@ async function assertCanStartJob(
   }
 }
 
-// assertCanStartJob's read-jobs check and startStoryJob's write-jobs commit
-// are separated by several awaits; without this, two near-simultaneous
-// requests for the same story (double-click, client retry) can both pass
-// the check before either commits, spawning two workers against the same
-// story. Synchronous Set.has/add around the whole check-then-commit section
-// closes that gap — no await separates them from the caller's perspective.
-const startingJobs = new Set<string>();
+// The queue's own arguments live in the command array (that's what actually
+// gets executed), so re-validating a job at launch time reads them back out
+// instead of duplicating them in the record.
+function segmentIdsFromCommand(command: string[]): string[] | undefined {
+  const flagIndex = command.indexOf('--segments');
+  if (flagIndex === -1) {
+    return undefined;
+  }
+  return command[flagIndex + 1]?.split(',').filter(Boolean);
+}
+
+async function launchJob(job: JobRecord): Promise<JobRecord> {
+  // Re-validate at launch, not just at enqueue: a job can sit in the queue for
+  // hours, and in the meantime the user may have edited segments (which resets
+  // the approval), removed a character's voice, or archived the story. Starting
+  // a worker that is guaranteed to raise would just burn a slot.
+  try {
+    await assertCanStartJob(
+      job.storyId,
+      job.type,
+      segmentIdsFromCommand(job.command),
+      job.id,
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Job is no longer startable';
+    await updateJob(job.id, {
+      status: 'failed',
+      finishedAt: new Date().toISOString(),
+      error: `Queued job could not start: ${message}`,
+    });
+    return { ...job, status: 'failed', error: message };
+  }
+
+  await patchStory(job.storyId, (story) => {
+    if (job.type === 'process_story') {
+      return { ...story, status: 'processed' };
+    }
+    if (job.type === 'generate_verify_tts') {
+      return { ...story, status: 'tts_running', audio: { ...story.audio, status: 'running' } };
+    }
+    return story;
+  });
+
+  const child = spawn(job.command[0], job.command.slice(1), {
+    cwd: process.cwd(),
+    env: process.env,
+    stdio: 'ignore',
+    detached: false,
+  });
+
+  await updateJob(job.id, { pid: child.pid ?? null });
+
+  child.on('exit', (code, signal) => {
+    void (async (): Promise<void> => {
+      // A signal (from stopStoryJob, or an OS-level kill) always means the
+      // job was interrupted rather than failing on its own — even for
+      // workers like process_story/concat_audio that don't opt into a
+      // graceful STOPPED_EXIT_CODE shutdown.
+      const status = signal ? 'cancelled' : jobStatusFromExitCode(code);
+      await updateJob(job.id, {
+        status,
+        finishedAt: new Date().toISOString(),
+        error: status === 'failed' ? `Worker exited with code ${code ?? 'unknown'}` : null,
+      });
+      // A slot just freed up — hand it to whatever is waiting.
+      void pumpQueue();
+    })();
+  });
+
+  child.on('error', (error) => {
+    void (async (): Promise<void> => {
+      await updateJob(job.id, {
+        status: 'failed',
+        finishedAt: new Date().toISOString(),
+        error: error.message,
+      });
+      void pumpQueue();
+    })();
+  });
+
+  return { ...job, pid: child.pid ?? null };
+}
+
+let pumping = false;
+let pumpRequested = false;
+
+/**
+ * Start as many queued jobs as the concurrency limit allows.
+ *
+ * Safe (and cheap) to call at any time: with an empty queue it is a single
+ * jobs.json read. Call it after enqueueing, after a job exits, and from the
+ * read paths the UI polls — that last one is what resumes a queue left behind
+ * by an app-server restart, since the in-memory child handles die with it.
+ */
+export async function pumpQueue(): Promise<void> {
+  if (pumping) {
+    // Coalesce: a pump already in flight will do another lap for this caller
+    // rather than running two claim loops against the same free slot.
+    pumpRequested = true;
+    return;
+  }
+  pumping = true;
+  try {
+    do {
+      pumpRequested = false;
+      for (;;) {
+        // Claiming (pick a pending job, flip it to running) happens under the
+        // jobs lock so two pumps can't hand the same slot to two jobs; the
+        // spawn itself deliberately happens outside it.
+        const claimed = await withJobsLock(async (): Promise<JobRecord | null> => {
+          const { jobs } = await readJobs();
+          const runningTts = jobs.filter(
+            (job) => job.status === 'running' && job.type === 'generate_verify_tts',
+          ).length;
+          // New jobs are prepended, so the oldest queued one is last.
+          const queued = jobs.filter((job) => job.status === 'pending').reverse();
+          const next = queued.find(
+            (job) =>
+              job.type !== 'generate_verify_tts' || runningTts < MAX_CONCURRENT_TTS_JOBS,
+          );
+          if (!next) {
+            return null;
+          }
+
+          // startedAt is stamped here rather than at enqueue so it measures the
+          // run, not the wait — analytics divides by it.
+          const started: JobRecord = {
+            ...next,
+            status: 'running',
+            startedAt: new Date().toISOString(),
+          };
+          await writeJobs({
+            jobs: jobs.map((job) => (job.id === started.id ? started : job)),
+          });
+          return started;
+        });
+
+        if (!claimed) {
+          break;
+        }
+        await launchJob(claimed);
+      }
+    } while (pumpRequested);
+  } finally {
+    pumping = false;
+  }
+}
 
 export async function startStoryJob(
   storyId: string,
   type: JobType,
   options?: { segmentIds?: string[] },
 ): Promise<JobRecord> {
-  if (startingJobs.has(storyId)) {
-    throw new Error(`Story already has a job start in progress`);
-  }
-  startingJobs.add(storyId);
+  const segmentIds = type === 'generate_verify_tts' ? options?.segmentIds : undefined;
 
-  let job: JobRecord;
-  try {
-    const segmentIds = type === 'generate_verify_tts' ? options?.segmentIds : undefined;
+  // Check-then-commit runs under the jobs lock so two near-simultaneous
+  // requests for the same story (double-click, client retry) can't both pass
+  // the "no active job" check before either commits.
+  const job = await withJobsLock(async (): Promise<JobRecord> => {
     await assertCanStartJob(storyId, type, segmentIds);
 
     const jobId = createJobId();
-    const logPath = `logs/${jobId}.log`;
-    const resultPath = `tmp/${jobId}.result.json`;
     const scriptPath = path.join(workersRoot, workerScripts[type]);
     const command = [
       pythonExecutable(),
@@ -147,73 +300,33 @@ export async function startStoryJob(
     if (segmentIds?.length) {
       command.push('--segments', segmentIds.join(','));
     }
-    const now = new Date().toISOString();
 
-    job = {
+    const queued: JobRecord = {
       id: jobId,
       storyId,
       type,
-      status: 'running',
+      // Every job enters the queue as "pending"; pumpQueue decides when it
+      // actually runs. For everything but TTS that is immediately.
+      status: 'pending',
       pid: null,
-      startedAt: now,
+      startedAt: new Date().toISOString(),
       finishedAt: null,
-      logPath: `stories/${storyId}/${logPath}`,
-      resultPath: `stories/${storyId}/${resultPath}`,
+      logPath: `stories/${storyId}/logs/${jobId}.log`,
+      resultPath: `stories/${storyId}/tmp/${jobId}.result.json`,
       command,
       error: null,
     };
 
     const jobs = await readJobs();
-    await writeJobs({ jobs: [job, ...jobs.jobs] });
-
-    await patchStory(storyId, (story) => {
-      if (type === 'process_story') {
-        return { ...story, status: 'processed' };
-      }
-      if (type === 'generate_verify_tts') {
-        return { ...story, status: 'tts_running', audio: { ...story.audio, status: 'running' } };
-      }
-      return story;
-    });
-  } finally {
-    startingJobs.delete(storyId);
-  }
-
-  const command = job.command;
-  const jobId = job.id;
-  const child = spawn(command[0], command.slice(1), {
-    cwd: process.cwd(),
-    env: process.env,
-    stdio: 'ignore',
-    detached: false,
+    await writeJobs({ jobs: [queued, ...jobs.jobs] });
+    return queued;
   });
 
-  await updateJob(jobId, { pid: child.pid ?? null });
+  await pumpQueue();
 
-  child.on('exit', (code, signal) => {
-    void (async (): Promise<void> => {
-      // A signal (from stopStoryJob, or an OS-level kill) always means the
-      // job was interrupted rather than failing on its own — even for
-      // workers like process_story/concat_audio that don't opt into a
-      // graceful STOPPED_EXIT_CODE shutdown.
-      const status = signal ? 'cancelled' : jobStatusFromExitCode(code);
-      await updateJob(jobId, {
-        status,
-        finishedAt: new Date().toISOString(),
-        error: status === 'failed' ? `Worker exited with code ${code ?? 'unknown'}` : null,
-      });
-    })();
-  });
-
-  child.on('error', (error) => {
-    void updateJob(jobId, {
-      status: 'failed',
-      finishedAt: new Date().toISOString(),
-      error: error.message,
-    });
-  });
-
-  return { ...job, pid: child.pid ?? null };
+  // Report back what the job actually became — started, or still waiting.
+  const { jobs } = await readJobs();
+  return jobs.find((candidate) => candidate.id === job.id) ?? job;
 }
 
 export async function stopStoryJob(storyId: string): Promise<JobRecord> {
@@ -222,6 +335,17 @@ export async function stopStoryJob(storyId: string): Promise<JobRecord> {
   if (!active) {
     throw new Error('No active job to stop');
   }
+
+  // A job still waiting in the queue has no process to signal — dropping it
+  // from the queue is the whole of "stopping" it.
+  if (active.status === 'pending') {
+    await updateJob(active.id, {
+      status: 'cancelled',
+      finishedAt: new Date().toISOString(),
+    });
+    return { ...active, status: 'cancelled' };
+  }
+
   if (active.pid == null) {
     throw new Error('Job has no process id yet; try again in a moment');
   }

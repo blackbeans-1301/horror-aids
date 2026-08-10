@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 
+import { pumpQueue } from '@/lib/job-runner';
 import { createStory, listStories } from '@/lib/json-store';
 import type { SourceType } from '@/types/story';
 
@@ -10,6 +11,9 @@ interface CreateStoryPayload {
 }
 
 export async function GET(): Promise<NextResponse> {
+  // Same self-healing pump as the story detail route: the dashboard polls this
+  // one, so a queue orphaned by a restart resumes as soon as any page is open.
+  void pumpQueue();
   const stories = await listStories();
   return NextResponse.json({ stories });
 }

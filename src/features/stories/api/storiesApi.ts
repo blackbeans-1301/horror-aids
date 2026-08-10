@@ -97,6 +97,17 @@ export const storiesApi = {
     });
   },
 
+  async setSegmentFlag(
+    slug: string,
+    segmentId: string,
+    flagged: boolean,
+  ): Promise<SegmentsFile> {
+    return requestJson<SegmentsFile>(`/api/stories/${slug}/segments/flag`, {
+      method: 'PATCH',
+      body: JSON.stringify({ segmentId, flagged }),
+    });
+  },
+
   async approveSegments(slug: string): Promise<void> {
     await requestJson(`/api/stories/${slug}/approve-segments`, { method: 'POST' });
   },
@@ -107,6 +118,14 @@ export const storiesApi = {
 
   async approveFinalAudio(slug: string): Promise<void> {
     await requestJson(`/api/stories/${slug}/approve-final-audio`, { method: 'POST' });
+  },
+
+  async revealFinalAudio(slug: string): Promise<void> {
+    await requestJson(`/api/stories/${slug}/reveal-final-audio`, { method: 'POST' });
+  },
+
+  async syncFromLibrary(slug: string): Promise<void> {
+    await requestJson(`/api/stories/${slug}/sync-from-library`, { method: 'POST' });
   },
 
   async startJob(slug: string, type: JobType, segmentIds?: string[]): Promise<JobRecord> {

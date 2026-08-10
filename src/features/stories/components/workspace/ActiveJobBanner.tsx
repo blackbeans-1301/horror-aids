@@ -1,6 +1,6 @@
 'use client';
 
-import { Loader2, Square } from 'lucide-react';
+import { Clock, Loader2, Square } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
 
 import type { JobRecord, JobType } from '@/types/story';
@@ -38,18 +38,31 @@ export const ActiveJobBanner: React.FC<ActiveJobBannerProps> = ({
     return () => window.clearInterval(timer);
   }, []);
 
+  // A queued job has no process and no log yet — only TTS queues, and only
+  // behind another story's TTS run.
+  const isQueued = job.status === 'pending';
+
   return (
     <div className="job-banner" role="status">
-      <Loader2 size={16} className="spin" aria-hidden="true" />
+      {isQueued ? (
+        <Clock size={16} aria-hidden="true" />
+      ) : (
+        <Loader2 size={16} className="spin" aria-hidden="true" />
+      )}
       <span>
-        {jobLabels[job.type] ?? job.type} — running {formatElapsed(job.startedAt)}
+        {jobLabels[job.type] ?? job.type} —{' '}
+        {isQueued
+          ? `queued behind another story's audio job, waiting ${formatElapsed(job.startedAt)}`
+          : `running ${formatElapsed(job.startedAt)}`}
       </span>
-      <button className="button secondary" type="button" onClick={onViewLog}>
-        View log
-      </button>
+      {isQueued ? null : (
+        <button className="button secondary" type="button" onClick={onViewLog}>
+          View log
+        </button>
+      )}
       <button className="button danger" type="button" onClick={onStop} disabled={isStopping}>
         <Square size={14} aria-hidden="true" />
-        {isStopping ? 'Stopping…' : 'Stop'}
+        {isStopping ? 'Stopping…' : isQueued ? 'Remove from queue' : 'Stop'}
       </button>
     </div>
   );

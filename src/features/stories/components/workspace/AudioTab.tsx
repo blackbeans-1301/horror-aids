@@ -1,9 +1,10 @@
-import { AudioLines, Check, Download, Play, RefreshCw } from 'lucide-react';
+import { AudioLines, Check, Download, Flag, FolderOpen, Play, RefreshCw } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
 
 import { StoryPlayer } from '@/features/stories/components/workspace/StoryPlayer';
 import { assetUrl, segmentAudioPath } from '@/features/stories/utils/asset';
 import { formatClockDuration } from '@/features/stories/utils/format';
+import { withSlot } from '@/features/stories/utils/loadQueue';
 import type { JobType, SegmentRecord } from '@/types/story';
 
 const AudioDurationCell: React.FC<{ src: string }> = ({ src }) => {
@@ -11,30 +12,57 @@ const AudioDurationCell: React.FC<{ src: string }> = ({ src }) => {
 
   useEffect(() => {
     setDuration(null);
-    const audio = new Audio(src);
-    // Some WAV encoders leave the RIFF size field as a streaming placeholder,
-    // so Chrome reports duration as Infinity until it seeks to the end —
-    // force that seek, then jump back to 0 once the real duration is known.
-    const handleDurationUpdate = (): void => {
-      if (Number.isFinite(audio.duration)) {
-        setDuration(audio.duration);
-        return;
-      }
-      audio.currentTime = Number.MAX_SAFE_INTEGER;
-    };
-    const handleTimeUpdate = (): void => {
-      if (Number.isFinite(audio.duration)) {
-        setDuration(audio.duration);
-      }
-      audio.currentTime = 0;
-    };
-    audio.addEventListener('loadedmetadata', handleDurationUpdate);
-    audio.addEventListener('durationchange', handleDurationUpdate);
-    audio.addEventListener('timeupdate', handleTimeUpdate);
+    let cancelled = false;
+    let audio: HTMLAudioElement | null = null;
+    let handleDurationUpdate: (() => void) | null = null;
+    let handleTimeUpdate: (() => void) | null = null;
+
+    // Gated through withSlot() so a table with hundreds of segments doesn't
+    // fire that many concurrent requests to the asset route on mount.
+    void withSlot(
+      () =>
+        new Promise<void>((resolve) => {
+          if (cancelled) {
+            resolve();
+            return;
+          }
+          audio = new Audio(src);
+          // Some WAV encoders leave the RIFF size field as a streaming placeholder,
+          // so Chrome reports duration as Infinity until it seeks to the end —
+          // force that seek, then jump back to 0 once the real duration is known.
+          handleDurationUpdate = (): void => {
+            if (Number.isFinite(audio!.duration)) {
+              setDuration(audio!.duration);
+              resolve();
+              return;
+            }
+            audio!.currentTime = Number.MAX_SAFE_INTEGER;
+          };
+          handleTimeUpdate = (): void => {
+            if (Number.isFinite(audio!.duration)) {
+              setDuration(audio!.duration);
+            }
+            audio!.currentTime = 0;
+            resolve();
+          };
+          audio.addEventListener('loadedmetadata', handleDurationUpdate);
+          audio.addEventListener('durationchange', handleDurationUpdate);
+          audio.addEventListener('timeupdate', handleTimeUpdate);
+          audio.addEventListener('error', () => resolve(), { once: true });
+        }),
+    );
+
     return () => {
-      audio.removeEventListener('loadedmetadata', handleDurationUpdate);
-      audio.removeEventListener('durationchange', handleDurationUpdate);
-      audio.removeEventListener('timeupdate', handleTimeUpdate);
+      cancelled = true;
+      if (audio) {
+        if (handleDurationUpdate) {
+          audio.removeEventListener('loadedmetadata', handleDurationUpdate);
+          audio.removeEventListener('durationchange', handleDurationUpdate);
+        }
+        if (handleTimeUpdate) {
+          audio.removeEventListener('timeupdate', handleTimeUpdate);
+        }
+      }
     };
   }, [src]);
 
@@ -58,12 +86,14 @@ interface AudioTabProps {
   onClearRegenSelection: () => void;
   onConfirmVerifiedAudio: () => void;
   onApproveFinalAudio: () => void;
+  onRevealFinalAudio: () => void;
   playableSegments: SegmentRecord[];
   playingSegment: SegmentRecord | null;
   playerIndex: number | null;
   setPlayerIndex: React.Dispatch<React.SetStateAction<number | null>>;
   onSegmentEnded: () => void;
   onPlayFromSegment: (segmentId: string) => void;
+  onToggleSegmentFlag: (segmentId: string) => void;
 }
 
 export const AudioTab: React.FC<AudioTabProps> = ({
@@ -80,13 +110,19 @@ export const AudioTab: React.FC<AudioTabProps> = ({
   onClearRegenSelection,
   onConfirmVerifiedAudio,
   onApproveFinalAudio,
+  onRevealFinalAudio,
   playableSegments,
   playingSegment,
   playerIndex,
   setPlayerIndex,
   onSegmentEnded,
   onPlayFromSegment,
+  onToggleSegmentFlag,
 }) => {
+  const [showFlaggedOnly, setShowFlaggedOnly] = useState(false);
+  const flaggedCount = segments.filter((segment) => segment.flagged).length;
+  const visibleSegments = showFlaggedOnly ? segments.filter((segment) => segment.flagged) : segments;
+
   return (
     <section className="panel form">
       <div className="page-header">
@@ -96,15 +132,24 @@ export const AudioTab: React.FC<AudioTabProps> = ({
         </div>
       </div>
       <div className="panel">
-        <h3>Final WAV</h3>
+        <h3>Final M4A</h3>
         {finalAudioExists ? (
           <>
             <audio controls src={assetUrl(slug, finalAudioPath)} />
             <div className="button-row">
-              <a className="button secondary" href={assetUrl(slug, finalAudioPath)} download={`${slug}-final.wav`}>
+              <a className="button secondary" href={assetUrl(slug, finalAudioPath)} download={`${slug}-final.m4a`}>
                 <Download size={16} aria-hidden="true" />
-                Download final WAV
+                Download final M4A
               </a>
+              <button
+                className="button secondary"
+                type="button"
+                title="Reveal the final audio file in Finder"
+                onClick={onRevealFinalAudio}
+              >
+                <FolderOpen size={16} aria-hidden="true" />
+                Reveal in Finder
+              </button>
             </div>
           </>
         ) : (
@@ -164,10 +209,23 @@ export const AudioTab: React.FC<AudioTabProps> = ({
         onSegmentEnded={onSegmentEnded}
       />
 
+      <div className="button-row">
+        <button
+          className={showFlaggedOnly ? 'button' : 'button secondary'}
+          type="button"
+          onClick={() => setShowFlaggedOnly((current) => !current)}
+          disabled={!showFlaggedOnly && flaggedCount === 0}
+        >
+          <Flag size={16} aria-hidden="true" />
+          {showFlaggedOnly ? 'Show all segments' : `Show flagged only (${flaggedCount})`}
+        </button>
+      </div>
+
       <div className="table-wrap">
       <table className="table">
         <thead>
           <tr>
+            <th />
             <th />
             <th>ID</th>
             <th>Speaker</th>
@@ -177,8 +235,30 @@ export const AudioTab: React.FC<AudioTabProps> = ({
           </tr>
         </thead>
         <tbody>
-          {segments.map((segment) => (
-            <tr key={segment.id}>
+          {visibleSegments.length === 0 ? (
+            <tr>
+              <td colSpan={7} className="label">
+                No flagged segments.
+              </td>
+            </tr>
+          ) : null}
+          {visibleSegments.map((segment) => (
+            <tr key={segment.id} className={segment.flagged ? 'row-flagged' : undefined}>
+              <td>
+                <button
+                  className="button secondary"
+                  type="button"
+                  title={segment.flagged ? 'Unflag this segment' : 'Flag this segment for review'}
+                  aria-pressed={segment.flagged}
+                  onClick={() => onToggleSegmentFlag(segment.id)}
+                >
+                  <Flag
+                    size={15}
+                    aria-hidden="true"
+                    fill={segment.flagged ? 'currentColor' : 'none'}
+                  />
+                </button>
+              </td>
               <td>
                 {segment.status !== 'skipped' ? (
                   <input

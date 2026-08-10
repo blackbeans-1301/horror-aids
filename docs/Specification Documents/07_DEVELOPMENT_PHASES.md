@@ -70,13 +70,14 @@ Deliverables:
 - Job status polling.
 - Log viewer.
 - One active job per story.
+- One TTS job at a time across all stories — extra TTS jobs queue as `pending` and start when a slot frees (`HORROR_AIDS_MAX_TTS_JOBS` to change). `process_story` and `concat_audio` are not queued.
 
 Acceptance:
 
 - UI can start a test worker.
 - Logs appear in UI.
 - Failed job marks status failed.
-- App restart can read previous job records. Known gap: a job that was `running` when the Next.js process was killed has no automatic recovery — it stays `running` with no stale-lock clearing UI.
+- App restart can read previous job records. A job left `running` by a killed process is reconciled automatically on the next jobs read: a dead pid, or no pid at all more than 60s after the job started, marks it failed and recomputes the story's status from the segments that actually finished. Queued (`pending`) jobs left behind by a restart resume the next time any page is loaded.
 
 ## Phase 5: Story Processing Worker
 
@@ -151,7 +152,7 @@ Goal: make local audio tool usable repeatedly.
 Deliverables:
 
 - Error states.
-- Stale lock handling — **not yet implemented**, still an open gap.
+- Stale lock handling — done: orphaned `running` jobs (dead pid, or no pid 60s after start) are reconciled on read, and `data/jobs.json` mutations are serialised so concurrent writers cannot drop each other's updates.
 - Archive story — done: flag-based (`archived`/`archivedAt` on `story.json` + index entry), dashboard filter, job-start guard.
 - Basic validation messages.
 - Audio QC checks.
@@ -161,7 +162,7 @@ Deliverables:
 Acceptance:
 
 - One complete audio package can be produced end to end.
-- Failed jobs are recoverable — **partially**: job records survive a restart, but a job stuck at `running` from a killed process has no recovery path yet.
+- Failed jobs are recoverable: job records survive a restart, and a job stuck at `running` from a killed process is cleared automatically without blocking its story or the TTS queue.
 - Failed verification is visible and actionable, when verification is enabled.
 - User can understand required setup.
 

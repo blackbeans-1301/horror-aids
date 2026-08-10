@@ -22,7 +22,8 @@ export type SourceType =
   | 'manual'
   | 'generated_later'
   | 'reddit_reference_later'
-  | 'reddit_import_later';
+  | 'reddit_import_later'
+  | 'library_import';
 
 export type CharacterRole =
   | 'narrator'
@@ -67,6 +68,7 @@ export interface StoryIndexEntry {
   updatedAt: string;
   archived: boolean;
   archivedAt: string | null;
+  sourceContentId: string | null;
 }
 
 export interface StoryIndex {
@@ -85,6 +87,9 @@ export interface StoryRecord {
   updatedAt: string;
   archived: boolean;
   archivedAt: string | null;
+  // Folder id (in the content/horror-stories submodule) this workspace was imported from.
+  // null for stories created manually inside this app.
+  sourceContentId: string | null;
   text: {
     storyPath: string;
     charactersPath: string;
@@ -141,6 +146,7 @@ export interface SegmentRecord {
   whisperTranscriptPath: string;
   status: SegmentStatus;
   verification: SegmentVerification;
+  flagged: boolean;
 }
 
 export interface SegmentsFile {
@@ -209,4 +215,39 @@ export interface StoryDetail {
   recentJobs: JobRecord[];
   finalAudioExists: boolean;
   analytics: StoryAnalytics;
+}
+
+// The only two values a human ever sets directly, before any workspace
+// exists — 'processing'/'archived' are derived from the linked workspace's
+// real state (see deriveStatus in src/lib/content-library.ts), never stored.
+export type ContentStoryEditorialStatus = 'draft' | 'approved';
+
+export type ContentStoryStatus = ContentStoryEditorialStatus | 'processing' | 'archived';
+
+export interface ContentStoryEntry {
+  id: string;
+  title: string;
+  status: ContentStoryStatus;
+  chapterCount: number;
+  updatedAt: string | null;
+  linkedStorySlug: string | null;
+}
+
+export interface ContentStoryDocuments {
+  bible: string | null;
+  characters: string | null;
+  outline: string | null;
+  factDb: string | null;
+  progress: string | null;
+}
+
+export interface ContentChapter {
+  file: string;
+  title: string;
+  content: string;
+}
+
+export interface ContentStoryDetail extends ContentStoryEntry {
+  documents: ContentStoryDocuments;
+  chapters: ContentChapter[];
 }

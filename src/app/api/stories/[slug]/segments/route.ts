@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { patchStory, readSegments, writeSegments } from '@/lib/json-store';
+import type { SegmentVerification } from '@/types/story';
 import type {
   SegmentEmotion,
   SegmentRecord,
@@ -106,6 +107,7 @@ function normalizeSegments(input: unknown): SegmentRecord[] {
               ? verification.transcriptPreview
               : null,
         },
+        flagged: record.flagged === true,
       };
     })
     .filter((segment): segment is SegmentRecord => segment !== null);
@@ -126,19 +128,70 @@ export async function PUT(
 ): Promise<NextResponse> {
   const { slug } = await context.params;
   const body = (await request.json()) as SegmentsPayload;
-  const segments = normalizeSegments(body.segments);
+  const incoming = normalizeSegments(body.segments);
+  const onDisk = await readSegments(slug);
+  const previous = new Map(onDisk.segments.map((segment) => [segment.id, segment]));
+
+  // Generation state (status + verification) belongs to the TTS worker, not to
+  // the editor, so it is taken from disk rather than from the browser's copy —
+  // which can be minutes stale, or mid-run. Only a segment that actually
+  // changed (new id, or edited text/speaker/emotion) is reset to pending so
+  // the worker regenerates it; everything else keeps the audio it already has.
+  const pendingVerification: SegmentVerification = {
+    status: 'pending',
+    attempts: 0,
+    lastError: null,
+    transcriptPreview: null,
+  };
+  const segments = incoming.map((segment) => {
+    const prior = previous.get(segment.id);
+    const unchanged =
+      prior !== undefined &&
+      prior.text === segment.text &&
+      prior.speakerId === segment.speakerId &&
+      prior.emotion === segment.emotion;
+
+    if (prior !== undefined && unchanged) {
+      return { ...segment, status: prior.status, verification: prior.verification };
+    }
+
+    if (segment.status === 'skipped') {
+      return { ...segment, status: 'skipped' as const, verification: pendingVerification };
+    }
+
+    return { ...segment, status: 'pending' as const, verification: pendingVerification };
+  });
+
   const updated = await writeSegments(slug, { segments });
 
-  await patchStory(slug, (story) => ({
-    ...story,
-    status: 'segments_review',
-    approvals: {
-      segments: { status: 'pending', approvedAt: null },
-      verifiedAudio: { status: 'pending', approvedAt: null },
-      finalAudio: { status: 'pending', approvedAt: null },
-    },
-    audio: { ...story.audio, status: 'pending' },
-  }));
+  // Only an edit that really changed the script sends the story back for
+  // re-approval. A save that changed nothing (or only a flag) used to invalidate
+  // every approval anyway, forcing a re-approve round for no reason.
+  const textChanged =
+    updated.segments.length !== onDisk.segments.length ||
+    updated.segments.some((segment, index) => {
+      const prior = onDisk.segments[index];
+      return (
+        prior === undefined ||
+        prior.id !== segment.id ||
+        prior.text !== segment.text ||
+        prior.speakerId !== segment.speakerId ||
+        prior.emotion !== segment.emotion
+      );
+    });
+
+  if (textChanged) {
+    await patchStory(slug, (story) => ({
+      ...story,
+      status: 'segments_review',
+      approvals: {
+        segments: { status: 'pending', approvedAt: null },
+        verifiedAudio: { status: 'pending', approvedAt: null },
+        finalAudio: { status: 'pending', approvedAt: null },
+      },
+      audio: { ...story.audio, status: 'pending' },
+    }));
+  }
 
   const inputCount = Array.isArray(body.segments) ? body.segments.length : 0;
   const droppedCount = Math.max(0, inputCount - segments.length);

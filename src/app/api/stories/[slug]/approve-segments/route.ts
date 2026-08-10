@@ -36,10 +36,20 @@ export async function POST(
     }
   }
 
+  // Approving is a gate on the *text*, not a reset of audio progress. A
+  // segment that already generated and passed keeps its "complete" status so
+  // the TTS worker still sees it as done — re-approving after an edit used to
+  // stamp every segment back to "ready", which made the next full run
+  // regenerate hundreds of already-finished segments from scratch.
   const approvedSegments = await writeSegments(slug, {
     segments: segmentsFile.segments.map((segment) => ({
       ...segment,
-      status: segment.status === 'skipped' ? 'skipped' : 'ready',
+      status:
+        segment.status === 'skipped'
+          ? 'skipped'
+          : segment.verification.status === 'passed'
+            ? 'complete'
+            : 'ready',
     })),
   });
   const story = await setApproval(slug, 'segments', 'approved');

@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Archive, FilePlus2, FileUp, RefreshCw } from 'lucide-react';
+import { Archive, BadgeCheck, BookOpen, FilePlus2, FileUp, ListChecks, RefreshCw } from 'lucide-react';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
 
@@ -11,6 +11,14 @@ import { AppShell } from '@/features/stories/components/AppShell';
 import { readStoryFilesAsText } from '@/features/stories/utils/readStoryFiles';
 import type { StoryIndexEntry } from '@/types/story';
 
+type DashboardTab = 'active' | 'verified' | 'archived';
+
+const DASHBOARD_TABS: Array<{ id: DashboardTab; label: string; icon: React.ReactNode }> = [
+  { id: 'active', label: 'Active', icon: <ListChecks size={14} aria-hidden="true" /> },
+  { id: 'verified', label: 'Verified', icon: <BadgeCheck size={14} aria-hidden="true" /> },
+  { id: 'archived', label: 'Archived', icon: <Archive size={14} aria-hidden="true" /> },
+];
+
 export const DashboardClient: React.FC = () => {
   const router = useRouter();
   const [stories, setStories] = useState<StoryIndexEntry[]>([]);
@@ -18,7 +26,7 @@ export const DashboardClient: React.FC = () => {
   const [storyText, setStoryText] = useState<string>('');
   const [message, setMessage] = useState<string>('Loading stories...');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
-  const [showArchived, setShowArchived] = useState<boolean>(false);
+  const [activeTab, setActiveTab] = useState<DashboardTab>('active');
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const loadStories = useCallback(async (): Promise<void> => {
@@ -80,7 +88,24 @@ export const DashboardClient: React.FC = () => {
     event.target.value = '';
   }, []);
 
-  const visibleStories = stories.filter((story) => story.archived === showArchived);
+  const byTab = (tab: DashboardTab): StoryIndexEntry[] =>
+    stories.filter((story) => {
+      if (tab === 'archived') {
+        return story.archived;
+      }
+      if (tab === 'verified') {
+        return !story.archived && story.status === 'audio_complete';
+      }
+      return !story.archived && story.status !== 'audio_complete';
+    });
+
+  const visibleStories = byTab(activeTab);
+  const emptyLabel =
+    activeTab === 'archived'
+      ? 'No archived stories.'
+      : activeTab === 'verified'
+        ? 'No verified stories yet — approve final audio in a workspace to see it here.'
+        : 'Story workspaces will appear here after creation.';
 
   return (
     <AppShell>
@@ -94,10 +119,16 @@ export const DashboardClient: React.FC = () => {
               Whisper, then concatenate a final WAV.
             </p>
           </div>
-          <button className="button secondary" type="button" onClick={() => void loadStories()}>
-            <RefreshCw size={16} aria-hidden="true" />
-            Refresh
-          </button>
+          <div className="button-row">
+            <Link className="button secondary" href="/library">
+              <BookOpen size={16} aria-hidden="true" />
+              Sync từ Thư viện
+            </Link>
+            <button className="button secondary" type="button" onClick={() => void loadStories()}>
+              <RefreshCw size={16} aria-hidden="true" />
+              Refresh
+            </button>
+          </div>
         </div>
 
         <div className="waveform-divider" aria-hidden="true">
@@ -158,25 +189,23 @@ export const DashboardClient: React.FC = () => {
               <div>
                 <h2>Stories</h2>
                 <p>
-                  {visibleStories.length} {showArchived ? 'archived' : 'active'} local workspace
+                  {visibleStories.length} {activeTab} local workspace
                   {visibleStories.length === 1 ? '' : 's'}
                 </p>
               </div>
-              <div className="button-row">
-                <button
-                  className={showArchived ? 'button secondary' : 'button'}
-                  type="button"
-                  onClick={() => setShowArchived(false)}
-                >
-                  Active
-                </button>
-                <button
-                  className={showArchived ? 'button' : 'button secondary'}
-                  type="button"
-                  onClick={() => setShowArchived(true)}
-                >
-                  Archived
-                </button>
+              <div className="tabs">
+                {DASHBOARD_TABS.map((tab) => (
+                  <button
+                    className={activeTab === tab.id ? 'tab active' : 'tab'}
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setActiveTab(tab.id)}
+                  >
+                    {tab.icon}
+                    {tab.label}
+                    <span className="badge">{byTab(tab.id).length}</span>
+                  </button>
+                ))}
               </div>
             </div>
             <div className="story-list">
@@ -203,11 +232,7 @@ export const DashboardClient: React.FC = () => {
               {visibleStories.length === 0 ? (
                 <div className="story-item empty">
                   <Archive size={18} aria-hidden="true" />
-                  <p>
-                    {showArchived
-                      ? 'No archived stories.'
-                      : 'Story workspaces will appear here after creation.'}
-                  </p>
+                  <p>{emptyLabel}</p>
                 </div>
               ) : null}
             </div>

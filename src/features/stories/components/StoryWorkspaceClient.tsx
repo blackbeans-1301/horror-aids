@@ -63,6 +63,7 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
     allVerified,
     segmentApproval,
     verifiedApproval,
+    hasActiveJob,
     isArchived,
     canProcess,
     canGenerate,
@@ -77,6 +78,8 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
     approveSegments,
     confirmVerifiedAudio,
     approveFinalAudio,
+    revealFinalAudio,
+    syncFromLibrary,
     loadJobLog,
     updateCharacter,
     addCharacter,
@@ -87,6 +90,7 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
     deleteSegment,
     splitSegment,
     mergeWithNext,
+    toggleSegmentFlag,
   } = workspace;
 
   // Save/Process/Generate are already gated server-side for archived
@@ -141,6 +145,24 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
       }
     }
     await startJob(type, segmentIds);
+  };
+
+  // Overwrites story text with the latest from the writing library and
+  // resets all approvals to pending (see writeStoryText) — confirm first,
+  // same danger-confirm shape as re-processing a story.
+  const handleSyncFromLibrary = async (): Promise<void> => {
+    const confirmed = await confirm({
+      title: 'Đồng bộ lại từ Thư viện?',
+      description:
+        'Ghi đè nội dung truyện bằng bản mới nhất từ Thư viện và reset toàn bộ tiến độ duyệt ' +
+        '(segments, verified audio, final audio) về pending. Không thể hoàn tác.',
+      confirmLabel: 'Đồng bộ và reset',
+      danger: true,
+    });
+    if (!confirmed) {
+      return;
+    }
+    await syncFromLibrary();
   };
 
   return (
@@ -215,9 +237,11 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
             canGenerate={canGenerate}
             canConfirmVerified={canConfirmVerified}
             canConcat={canConcat}
+            sourceContentId={detail?.story.sourceContentId ?? null}
             onSaveStory={() => void saveStory()}
             onStartJob={(type) => void handleStartJob(type)}
             onConfirmVerifiedAudio={() => void confirmVerifiedAudio()}
+            onSyncFromLibrary={() => void handleSyncFromLibrary()}
           />
         ) : null}
 
@@ -253,6 +277,7 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
             characters={characters}
             voicesReady={voicesReady}
             isBusy={effectiveBusy}
+            hasActiveJob={hasActiveJob}
             onUpdateSegment={updateSegment}
             onAddSegment={addSegment}
             onInsertSegmentAfter={insertSegmentAfter}
@@ -273,19 +298,21 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
             canConfirmVerified={canConfirmVerified}
             canConcat={canConcat}
             finalAudioExists={detail?.finalAudioExists ?? false}
-            finalAudioPath={detail?.story.audio.finalPath ?? 'audio/final.wav'}
+            finalAudioPath={detail?.story.audio.finalPath ?? 'audio/final.m4a'}
             regenSelection={regenSelection}
             onToggleRegenSelection={toggleRegenSelection}
             onStartJob={(type, segmentIds) => void handleStartJob(type, segmentIds)}
             onClearRegenSelection={() => setRegenSelection(new Set())}
             onConfirmVerifiedAudio={() => void confirmVerifiedAudio()}
             onApproveFinalAudio={() => void approveFinalAudio()}
+            onRevealFinalAudio={() => void revealFinalAudio()}
             playableSegments={playableSegments}
             playingSegment={playingSegment}
             playerIndex={playerIndex}
             setPlayerIndex={setPlayerIndex}
             onSegmentEnded={handleSegmentEnded}
             onPlayFromSegment={playFromSegment}
+            onToggleSegmentFlag={(segmentId) => void toggleSegmentFlag(segmentId)}
           />
         ) : null}
 
