@@ -101,6 +101,17 @@ async function sortedChapterFiles(id: string): Promise<string[]> {
   });
 }
 
+// Chapter files often open with their own "# Chương N: Title" heading (see
+// chapterTitle below, which reads that same line for the Chapters tab). That
+// heading is structural — useful for a human browsing chapters — but it must
+// never end up as a literal line in text/story.md, or process_story.py will
+// segment it into the narration as if the narrator were reading a markdown
+// heading aloud. Only strips a heading at the very start of the chapter
+// (no `m` flag), not one that happens to appear mid-chapter.
+function stripLeadingHeading(content: string): string {
+  return content.replace(/^#\s+.+\r?\n+/, '').trim();
+}
+
 export async function mergeChapters(id: string): Promise<string> {
   const sorted = await sortedChapterFiles(id);
   const chaptersDir = resolveContentPath(id, 'chapters');
@@ -108,7 +119,7 @@ export async function mergeChapters(id: string): Promise<string> {
     sorted.map((name) => fs.readFile(path.join(chaptersDir, name), 'utf8')),
   );
   return contents
-    .map((text) => text.trim())
+    .map((text) => stripLeadingHeading(text.trim()))
     .filter(Boolean)
     .join('\n\n');
 }

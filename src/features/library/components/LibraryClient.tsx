@@ -10,11 +10,13 @@ import {
   Info,
   Loader2,
   PenLine,
+  RefreshCcw,
   Undo2,
 } from 'lucide-react';
 import React, { useCallback, useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 
+import { useConfirm } from '@/components/ConfirmDialog';
 import { libraryApi } from '@/features/library/api/libraryApi';
 import { storiesApi } from '@/features/stories/api/storiesApi';
 import { AppShell } from '@/features/stories/components/AppShell';
@@ -110,6 +112,7 @@ export const LibraryClient: React.FC = () => {
   const [isPulling, setIsPulling] = useState<boolean>(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<ContentStoryStatus>('draft');
+  const confirm = useConfirm();
 
   const loadStories = useCallback(async (): Promise<void> => {
     try {
@@ -168,6 +171,40 @@ export const LibraryClient: React.FC = () => {
       }
     },
     [loadStories],
+  );
+
+  // Importing is create-once (see importContentStory) — it never picks up
+  // edits made to the chapter files after the first import. This is the
+  // explicit, destructive re-sync for that case: overwrite the linked
+  // workspace's text with the latest chapters and reset its approvals.
+  const handleResync = useCallback(
+    async (entry: ContentStoryEntry): Promise<void> => {
+      if (!entry.linkedStorySlug) {
+        return;
+      }
+      const confirmed = await confirm({
+        title: 'Nhập lại nội dung từ Thư viện?',
+        description:
+          `Ghi đè nội dung truyện "${entry.title}" trong workspace bằng bản chương mới nhất và ` +
+          'reset toàn bộ tiến độ duyệt (segments, audio, video) về pending. Không thể hoàn tác.',
+        confirmLabel: 'Nhập lại và reset',
+        danger: true,
+      });
+      if (!confirmed) {
+        return;
+      }
+      setBusyId(entry.id);
+      try {
+        await storiesApi.syncFromLibrary(entry.linkedStorySlug);
+        toast.success(`Đã nhập lại nội dung mới cho "${entry.title}".`);
+        await loadStories();
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Không thể nhập lại');
+      } finally {
+        setBusyId(null);
+      }
+    },
+    [confirm, loadStories],
   );
 
   // Archived is derived from the linked workspace's own archived flag (see
@@ -301,10 +338,22 @@ export const LibraryClient: React.FC = () => {
             emptyLabel={activeTabDef.emptyLabel}
             renderActions={(entry) =>
               entry.linkedStorySlug ? (
-                <Link className="button small" href={`/stories/${entry.linkedStorySlug}`}>
-                  <ArrowUpRight size={15} aria-hidden="true" />
-                  Mở workspace
-                </Link>
+                <>
+                  <Link className="button small" href={`/stories/${entry.linkedStorySlug}`}>
+                    <ArrowUpRight size={15} aria-hidden="true" />
+                    Mở workspace
+                  </Link>
+                  <button
+                    className="button secondary small"
+                    type="button"
+                    disabled={busyId === entry.id}
+                    title="Nội dung chương đã sửa sau khi nhập? Đồng bộ lại vào workspace."
+                    onClick={() => void handleResync(entry)}
+                  >
+                    <RefreshCcw size={15} aria-hidden="true" />
+                    Nhập lại
+                  </button>
+                </>
               ) : null
             }
           />

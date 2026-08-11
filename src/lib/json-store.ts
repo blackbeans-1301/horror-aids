@@ -524,6 +524,31 @@ export async function patchStory(
   return readStory(slug);
 }
 
+// The MVP's stated policy is "archive is the only removal-from-view
+// mechanism, no hard delete" (see 02_LOCAL_WORKSPACE_SPEC.md) — this is a
+// deliberate, narrow exception for cleaning up throwaway test workspaces
+// that would otherwise clutter the Archived tab forever. Only reachable on
+// an already-archived story (enforced here, not just in the UI), which
+// means it's already been through the "are you sure" of archiving once.
+export async function deleteStoryPermanently(slug: string): Promise<void> {
+  const story = await readStory(slug);
+  if (!story.archived) {
+    throw new Error('Only archived stories can be permanently deleted — archive it first');
+  }
+
+  const jobs = await readJobs();
+  const active = jobs.jobs.find((job) => job.storyId === slug && isRunning(job));
+  if (active) {
+    throw new Error('Cannot delete a story with an active job — stop it first');
+  }
+
+  await fs.rm(storyDir(slug), { recursive: true, force: true });
+
+  const index = await readStoryIndex();
+  await writeStoryIndex({ stories: index.stories.filter((entry) => entry.id !== slug) });
+  await writeJobs({ jobs: jobs.jobs.filter((job) => job.storyId !== slug) });
+}
+
 export async function readCharacters(slug: string): Promise<CharactersFile> {
   const story = await readStory(slug);
   return readJsonFile<CharactersFile>(resolveStoryPath(slug, story.text.charactersPath), {

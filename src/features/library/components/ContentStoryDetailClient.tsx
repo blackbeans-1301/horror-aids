@@ -2,13 +2,15 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, FileInput } from 'lucide-react';
+import { ArrowLeft, FileInput, RefreshCcw } from 'lucide-react';
 import React, { useCallback, useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { toast } from 'react-toastify';
 
+import { useConfirm } from '@/components/ConfirmDialog';
 import { libraryApi } from '@/features/library/api/libraryApi';
+import { storiesApi } from '@/features/stories/api/storiesApi';
 import { AppShell } from '@/features/stories/components/AppShell';
 import type { ContentStoryDetail, ContentStoryDocuments } from '@/types/story';
 
@@ -30,6 +32,8 @@ export const ContentStoryDetailClient: React.FC<{ id: string }> = ({ id }) => {
   const [activeTab, setActiveTab] = useState<TabId>('bible');
   const [chapterIndex, setChapterIndex] = useState<number>(0);
   const [isImporting, setIsImporting] = useState<boolean>(false);
+  const [isResyncing, setIsResyncing] = useState<boolean>(false);
+  const confirm = useConfirm();
 
   useEffect(() => {
     let cancelled = false;
@@ -67,6 +71,37 @@ export const ContentStoryDetailClient: React.FC<{ id: string }> = ({ id }) => {
     }
   }, [detail, router]);
 
+  // Importing is create-once — it never picks up edits made to the chapter
+  // files after the first import. This is the explicit, destructive
+  // re-sync for that case (same action as the workspace's own "Đồng bộ lại
+  // từ Thư viện" button, exposed here since this is where the operator
+  // notices the chapters changed).
+  const handleResync = useCallback(async (): Promise<void> => {
+    if (!detail?.linkedStorySlug) {
+      return;
+    }
+    const confirmed = await confirm({
+      title: 'Nhập lại nội dung từ Thư viện?',
+      description:
+        `Ghi đè nội dung truyện "${detail.title}" trong workspace bằng bản chương mới nhất và ` +
+        'reset toàn bộ tiến độ duyệt (segments, audio, video) về pending. Không thể hoàn tác.',
+      confirmLabel: 'Nhập lại và reset',
+      danger: true,
+    });
+    if (!confirmed) {
+      return;
+    }
+    setIsResyncing(true);
+    try {
+      await storiesApi.syncFromLibrary(detail.linkedStorySlug);
+      toast.success(`Đã nhập lại nội dung mới cho "${detail.title}".`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Không thể nhập lại');
+    } finally {
+      setIsResyncing(false);
+    }
+  }, [confirm, detail]);
+
   return (
     <AppShell>
       <main className="page">
@@ -101,6 +136,18 @@ export const ContentStoryDetailClient: React.FC<{ id: string }> = ({ id }) => {
                 <button className="button" type="button" onClick={() => void handleImport()} disabled={isImporting}>
                   <FileInput size={16} aria-hidden="true" />
                   {isImporting ? 'Đang nhập...' : 'Nhập vào xử lý'}
+                </button>
+              ) : null}
+              {detail.status === 'processing' && detail.linkedStorySlug ? (
+                <button
+                  className="button secondary"
+                  type="button"
+                  onClick={() => void handleResync()}
+                  disabled={isResyncing}
+                  title="Nội dung chương đã sửa sau khi nhập? Đồng bộ lại vào workspace."
+                >
+                  <RefreshCcw size={16} aria-hidden="true" />
+                  {isResyncing ? 'Đang nhập lại...' : 'Nhập lại'}
                 </button>
               ) : null}
             </div>

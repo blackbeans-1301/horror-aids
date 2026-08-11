@@ -2,10 +2,11 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Archive, AudioLines, BookOpen, Clapperboard, FilePlus2, FileUp, ListChecks } from 'lucide-react';
+import { Archive, AudioLines, BookOpen, Clapperboard, FilePlus2, FileUp, ListChecks, Trash2 } from 'lucide-react';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
 
+import { useConfirm } from '@/components/ConfirmDialog';
 import { storiesApi } from '@/features/stories/api/storiesApi';
 import { AppShell } from '@/features/stories/components/AppShell';
 import { readStoryFilesAsText } from '@/features/stories/utils/readStoryFiles';
@@ -29,6 +30,7 @@ export const DashboardClient: React.FC = () => {
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<DashboardTab>('active');
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const confirm = useConfirm();
 
   const loadStories = useCallback(async (): Promise<void> => {
     try {
@@ -55,6 +57,35 @@ export const DashboardClient: React.FC = () => {
       }
     },
     [loadStories],
+  );
+
+  // Archive is normally the only removal mechanism in this app — this is a
+  // narrow, explicit exception for throwaway test workspaces cluttering the
+  // Archived tab. Only reachable from there, and the server independently
+  // refuses to delete anything that isn't already archived.
+  const handleDeletePermanently = useCallback(
+    async (story: StoryIndexEntry): Promise<void> => {
+      const confirmed = await confirm({
+        title: 'Xoá vĩnh viễn workspace này?',
+        description:
+          `Xoá toàn bộ folder "${story.id}" (story.json, audio, video, logs...) khỏi đĩa. ` +
+          `Không thể hoàn tác, không có bản sao. Chỉ dùng cho workspace test/rác — nếu đây là ` +
+          'truyện thật, dùng Unarchive thay vì xoá.',
+        confirmLabel: 'Xoá vĩnh viễn',
+        danger: true,
+      });
+      if (!confirmed) {
+        return;
+      }
+      try {
+        await storiesApi.deletePermanently(story.id);
+        toast.success(`Đã xoá vĩnh viễn "${story.title}".`);
+        await loadStories();
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Could not delete story');
+      }
+    },
+    [confirm, loadStories],
   );
 
   const handleCreate = useCallback(
@@ -227,14 +258,27 @@ export const DashboardClient: React.FC = () => {
                     <span className="mono">{story.id}</span>
                     <span className="label">Updated {new Date(story.updatedAt).toLocaleString()}</span>
                   </Link>
-                  <button
-                    className="button secondary small"
-                    type="button"
-                    onClick={() => void handleToggleArchive(story)}
-                  >
-                    <Archive size={15} aria-hidden="true" />
-                    {story.archived ? 'Unarchive' : 'Archive'}
-                  </button>
+                  <div className="button-row">
+                    <button
+                      className="button secondary small"
+                      type="button"
+                      onClick={() => void handleToggleArchive(story)}
+                    >
+                      <Archive size={15} aria-hidden="true" />
+                      {story.archived ? 'Unarchive' : 'Archive'}
+                    </button>
+                    {story.archived ? (
+                      <button
+                        className="button danger small"
+                        type="button"
+                        title="Xoá vĩnh viễn — chỉ dùng cho workspace test/rác"
+                        onClick={() => void handleDeletePermanently(story)}
+                      >
+                        <Trash2 size={15} aria-hidden="true" />
+                        Xoá vĩnh viễn
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
               ))}
               {visibleStories.length === 0 ? (

@@ -68,6 +68,10 @@ export const storiesApi = {
     return data.story;
   },
 
+  async deletePermanently(slug: string): Promise<void> {
+    await requestJson(`/api/stories/${slug}`, { method: 'DELETE' });
+  },
+
   async saveStoryText(slug: string, storyText: string): Promise<void> {
     await requestJson(`/api/stories/${slug}/story-text`, {
       method: 'PUT',

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { pumpQueue } from '@/lib/job-runner';
-import { getStoryDetail, patchStory } from '@/lib/json-store';
+import { deleteStoryPermanently, getStoryDetail, patchStory } from '@/lib/json-store';
 
 interface StoryRouteContext {
   params: Promise<{ slug: string }>;
@@ -66,6 +66,23 @@ export async function PATCH(
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Story not found' },
       { status: 404 },
+    );
+  }
+}
+
+export async function DELETE(
+  _request: Request,
+  context: StoryRouteContext,
+): Promise<NextResponse> {
+  const { slug } = await context.params;
+
+  try {
+    await deleteStoryPermanently(slug);
+    return NextResponse.json({ slug });
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'Could not delete story' },
+      { status: 400 },
     );
   }
 }
