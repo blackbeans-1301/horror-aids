@@ -2,9 +2,12 @@ import 'server-only';
 
 import { constants as fsConstants } from 'node:fs';
 import fs from 'node:fs/promises';
+import crypto from 'node:crypto';
 import path from 'node:path';
 
 import { probeIntegratedLufs, probeMediaMetadata } from '@/lib/media-probe';
+import { generateYoutubeMetadataFields } from '@/lib/openai-metadata';
+import { renderYoutubeDescription, slugifyForHashtag } from '@/lib/youtube-description';
 import {
   configRoot,
   dataRoot,
@@ -45,6 +48,7 @@ import type {
   VideoRenderSummary,
   VoiceRecord,
   VoicesFile,
+  YoutubeMetadataFile,
 } from '@/types/story';
 
 const JOB_TYPES: JobType[] = ['process_story', 'generate_verify_tts', 'concat_audio', 'render_video'];
@@ -416,6 +420,7 @@ export async function createStory(input: {
       verifiedAudio: { status: 'pending', approvedAt: null },
       finalAudio: { status: 'pending', approvedAt: null },
       finalVideo: { status: 'pending', approvedAt: null },
+      metadata: { status: 'pending', approvedAt: null },
     },
     audio: {
       segmentsDir: 'audio/segments',
@@ -428,6 +433,10 @@ export async function createStory(input: {
       status: 'pending',
       durationMs: null,
       renderedAt: null,
+    },
+    metadata: {
+      path: 'metadata/youtube.json',
+      status: 'pending',
     },
   };
 
@@ -470,9 +479,10 @@ export async function readStory(slug: string): Promise<StoryRecord> {
   if (!story) {
     throw new Error(`Story not found: ${slug}`);
   }
-  // Stories created before the archive/library-import/video-assembly features
-  // shipped have no archived/archivedAt/sourceContentId/approvals.finalVideo/
-  // video fields on disk.
+  // Stories created before the archive/library-import/video-assembly/
+  // youtube-metadata features shipped have no archived/archivedAt/
+  // sourceContentId/approvals.finalVideo/approvals.metadata/video/metadata
+  // fields on disk.
   return {
     ...story,
     archived: story.archived ?? false,
@@ -481,6 +491,7 @@ export async function readStory(slug: string): Promise<StoryRecord> {
     approvals: {
       ...story.approvals,
       finalVideo: story.approvals?.finalVideo ?? { status: 'pending', approvedAt: null },
+      metadata: story.approvals?.metadata ?? { status: 'pending', approvedAt: null },
     },
     video: story.video ?? {
       planPath: 'video/plan.json',
@@ -488,6 +499,10 @@ export async function readStory(slug: string): Promise<StoryRecord> {
       status: 'pending',
       durationMs: null,
       renderedAt: null,
+    },
+    metadata: story.metadata ?? {
+      path: 'metadata/youtube.json',
+      status: 'pending',
     },
   };
 }
@@ -604,6 +619,7 @@ export async function writeStoryText(slug: string, storyText: string): Promise<v
       verifiedAudio: { status: 'pending', approvedAt: null },
       finalAudio: { status: 'pending', approvedAt: null },
       finalVideo: { status: 'pending', approvedAt: null },
+      metadata: { status: 'pending', approvedAt: null },
     },
     audio: { ...current.audio, status: 'pending' },
     video: { ...current.video, status: 'pending' },
@@ -612,7 +628,7 @@ export async function writeStoryText(slug: string, storyText: string): Promise<v
 
 export async function setApproval(
   slug: string,
-  key: 'segments' | 'verifiedAudio' | 'finalAudio' | 'finalVideo',
+  key: 'segments' | 'verifiedAudio' | 'finalAudio' | 'finalVideo' | 'metadata',
   status: ApprovalStatus,
 ): Promise<StoryRecord> {
   const approvedAt = status === 'approved' ? new Date().toISOString() : null;
@@ -642,20 +658,26 @@ export async function setApproval(
       next.status = 'video_complete';
     }
 
+    if (key === 'metadata' && status === 'approved') {
+      next.status = 'metadata_ready';
+    }
+
     return next;
   });
 }
 
 export async function getStoryDetail(slug: string): Promise<StoryDetail> {
-  const [story, storyText, characters, segments, jobs, videoPlan, videoRenders] = await Promise.all([
-    readStory(slug),
-    readStoryText(slug),
-    readCharacters(slug),
-    readSegments(slug),
-    readJobs(),
-    readVideoPlanOrDefaults(slug),
-    listVideoRenders(slug),
-  ]);
+  const [story, storyText, characters, segments, jobs, videoPlan, videoRenders, youtubeMetadata] =
+    await Promise.all([
+      readStory(slug),
+      readStoryText(slug),
+      readCharacters(slug),
+      readSegments(slug),
+      readJobs(),
+      readVideoPlanOrDefaults(slug),
+      listVideoRenders(slug),
+      readYoutubeMetadataOrDefault(slug),
+    ]);
   const storyJobs = jobs.jobs
     .filter((job) => job.storyId === slug)
     .sort((a, b) => b.startedAt.localeCompare(a.startedAt));
@@ -677,6 +699,7 @@ export async function getStoryDetail(slug: string): Promise<StoryDetail> {
     videoPlan,
     finalVideoExists,
     videoRenders,
+    youtubeMetadata,
     analytics: computeStoryAnalytics(story, storyJobs),
   };
 }
@@ -1263,6 +1286,180 @@ export async function deleteVideoRender(slug: string, jobId: string): Promise<vo
     }
   });
   await fs.unlink(receiptPath).catch(() => undefined);
+}
+
+// --- YouTube upload metadata — a lightweight (non-job) OpenAI structured-
+// outputs call, generated once the final video is approved, then edited/
+// approved by the operator. See VideoAssembly-adjacent design notes for why
+// this is a direct API-route call rather than a job-runner worker: it's one
+// short HTTP request, not a GPU/ffmpeg-bound background process.
+
+function youtubeMetadataRelativePath(): string {
+  return 'metadata/youtube.json';
+}
+
+const DEFAULT_YOUTUBE_METADATA: YoutubeMetadataFile = {
+  schemaVersion: 1,
+  status: 'pending',
+  generatedAt: null,
+  model: null,
+  sourceSnapshot: null,
+  titles: [],
+  selectedTitleIndex: 0,
+  contextHook: '',
+  teaser: '',
+  tags: [],
+  category: '',
+  thumbnailPrompts: [],
+  pinnedComment: '',
+  storyHashtag: '',
+  renderedDescription: '',
+  error: null,
+};
+
+export async function readYoutubeMetadataOrDefault(slug: string): Promise<YoutubeMetadataFile> {
+  return readJsonFile<YoutubeMetadataFile>(
+    resolveStoryPath(slug, youtubeMetadataRelativePath()),
+    DEFAULT_YOUTUBE_METADATA,
+  );
+}
+
+async function writeYoutubeMetadataFile(
+  slug: string,
+  data: YoutubeMetadataFile,
+): Promise<YoutubeMetadataFile> {
+  await writeJsonFile(resolveStoryPath(slug, youtubeMetadataRelativePath()), data);
+  return data;
+}
+
+async function rerenderDescription(
+  slug: string,
+  fields: { titles: string[]; selectedTitleIndex: number; contextHook: string; teaser: string },
+): Promise<{ storyHashtag: string; renderedDescription: string }> {
+  const story = await readStory(slug);
+  const storyHashtag = slugifyForHashtag(story.title);
+  const selectedTitle = fields.titles[fields.selectedTitleIndex] ?? fields.titles[0] ?? story.title;
+  const renderedDescription = await renderYoutubeDescription({
+    title: selectedTitle,
+    contextHook: fields.contextHook,
+    teaser: fields.teaser,
+    storyHashtag,
+  });
+  return { storyHashtag, renderedDescription };
+}
+
+// Calls out to OpenAI for the story-specific fields (titles, teaser, tags,
+// thumbnail prompts, pinned comment), then renders the fixed channel
+// description template around them. A failed OpenAI call is recorded on the
+// metadata file (status 'failed' + error) rather than left silently
+// unresolved, so the UI can show why generation didn't produce anything.
+export async function generateYoutubeMetadata(slug: string): Promise<YoutubeMetadataFile> {
+  const [story, storyText] = await Promise.all([readStory(slug), readStoryText(slug)]);
+
+  let fields;
+  try {
+    fields = await generateYoutubeMetadataFields({
+      title: story.title,
+      storyText,
+      videoDurationMs: story.video.durationMs,
+    });
+  } catch (error) {
+    const currentMetadata = await readYoutubeMetadataOrDefault(slug);
+    const failed: YoutubeMetadataFile = {
+      ...currentMetadata,
+      status: 'failed',
+      error: error instanceof Error ? error.message : 'OpenAI request failed',
+    };
+    await writeYoutubeMetadataFile(slug, failed);
+    await patchStory(slug, (currentStory) => ({
+      ...currentStory,
+      metadata: { ...currentStory.metadata, status: 'failed' },
+    }));
+    throw error;
+  }
+
+  const { storyHashtag, renderedDescription } = await rerenderDescription(slug, {
+    titles: fields.titles,
+    selectedTitleIndex: 0,
+    contextHook: fields.contextHook,
+    teaser: fields.teaser,
+  });
+
+  const storyTextHash = crypto.createHash('sha256').update(storyText).digest('hex');
+
+  const next: YoutubeMetadataFile = {
+    schemaVersion: 1,
+    status: 'generated',
+    generatedAt: new Date().toISOString(),
+    model: fields.model,
+    sourceSnapshot: {
+      storyTitle: story.title,
+      videoDurationMs: story.video.durationMs,
+      storyTextHash,
+    },
+    titles: fields.titles,
+    selectedTitleIndex: 0,
+    contextHook: fields.contextHook,
+    teaser: fields.teaser,
+    tags: fields.tags,
+    category: fields.category,
+    thumbnailPrompts: fields.thumbnailPrompts,
+    pinnedComment: fields.pinnedComment,
+    storyHashtag,
+    renderedDescription,
+    error: null,
+  };
+
+  await writeYoutubeMetadataFile(slug, next);
+  // A fresh generation always needs a fresh look before shipping — reset any
+  // approval left over from a previous generation/edit round.
+  await patchStory(slug, (current) => ({
+    ...current,
+    metadata: { ...current.metadata, status: 'generated' },
+    approvals: { ...current.approvals, metadata: { status: 'pending', approvedAt: null } },
+  }));
+
+  return next;
+}
+
+// Operator edits after generation (swap which title variant is primary,
+// tweak the teaser, fix a tag). Recomputes the rendered description any time
+// a field that feeds the template changes, and — like a fresh generation —
+// invalidates any existing approval, since the approved text is no longer
+// what's on disk.
+export async function updateYoutubeMetadata(
+  slug: string,
+  patch: Partial<
+    Pick<
+      YoutubeMetadataFile,
+      | 'titles'
+      | 'selectedTitleIndex'
+      | 'contextHook'
+      | 'teaser'
+      | 'tags'
+      | 'category'
+      | 'thumbnailPrompts'
+      | 'pinnedComment'
+    >
+  >,
+): Promise<YoutubeMetadataFile> {
+  const current = await readYoutubeMetadataOrDefault(slug);
+  const merged = { ...current, ...patch };
+  const { storyHashtag, renderedDescription } = await rerenderDescription(slug, {
+    titles: merged.titles,
+    selectedTitleIndex: merged.selectedTitleIndex,
+    contextHook: merged.contextHook,
+    teaser: merged.teaser,
+  });
+  const next: YoutubeMetadataFile = { ...merged, storyHashtag, renderedDescription };
+
+  await writeYoutubeMetadataFile(slug, next);
+  await patchStory(slug, (currentStory) => ({
+    ...currentStory,
+    approvals: { ...currentStory.approvals, metadata: { status: 'pending', approvedAt: null } },
+  }));
+
+  return next;
 }
 
 export function isRunning(job: JobRecord): boolean {

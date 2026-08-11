@@ -7,6 +7,7 @@ import type {
   StoryIndexEntry,
   StoryRecord,
   VideoPlanFile,
+  YoutubeMetadataFile,
 } from '@/types/story';
 
 async function requestJson<T>(
@@ -113,6 +114,13 @@ export const storiesApi = {
     });
   },
 
+  async selectSegmentTake(slug: string, segmentId: string): Promise<SegmentsFile> {
+    return requestJson<SegmentsFile>(`/api/stories/${slug}/segments/select-take`, {
+      method: 'PATCH',
+      body: JSON.stringify({ segmentId }),
+    });
+  },
+
   async approveSegments(slug: string): Promise<void> {
     await requestJson(`/api/stories/${slug}/approve-segments`, { method: 'POST' });
   },
@@ -210,5 +218,36 @@ export const storiesApi = {
   async jobLog(jobId: string): Promise<string> {
     const data = await requestJson<{ log: string }>(`/api/jobs/${jobId}/log`);
     return data.log;
+  },
+
+  async youtubeMetadata(slug: string): Promise<YoutubeMetadataFile> {
+    const data = await requestJson<{ metadata: YoutubeMetadataFile }>(`/api/stories/${slug}/metadata`);
+    return data.metadata;
+  },
+
+  async saveYoutubeMetadata(
+    slug: string,
+    patch: Partial<YoutubeMetadataFile>,
+  ): Promise<YoutubeMetadataFile> {
+    const data = await requestJson<{ metadata: YoutubeMetadataFile }>(`/api/stories/${slug}/metadata`, {
+      method: 'PUT',
+      body: JSON.stringify(patch),
+    });
+    return data.metadata;
+  },
+
+  async generateYoutubeMetadata(slug: string): Promise<YoutubeMetadataFile> {
+    const data = await requestJson<{ metadata: YoutubeMetadataFile }>(
+      `/api/stories/${slug}/metadata/generate`,
+      { method: 'POST' },
+    );
+    return data.metadata;
+  },
+
+  async approveYoutubeMetadata(slug: string): Promise<StoryRecord> {
+    const data = await requestJson<{ story: StoryRecord }>(`/api/stories/${slug}/metadata/approve`, {
+      method: 'POST',
+    });
+    return data.story;
   },
 };

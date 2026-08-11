@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { patchStory, readSegments, writeSegments } from '@/lib/json-store';
-import type { SegmentVerification } from '@/types/story';
+import type { SegmentAudioTake, SegmentVerification } from '@/types/story';
 import type {
   SegmentEmotion,
   SegmentRecord,
@@ -34,6 +34,37 @@ const verificationStatuses = new Set<VerificationStatus>([
   'max_attempts_reached',
 ]);
 
+function normalizeVerification(input: unknown): SegmentVerification {
+  const verification =
+    typeof input === 'object' && input !== null ? (input as Record<string, unknown>) : {};
+  const status = verificationStatuses.has(verification.status as VerificationStatus)
+    ? (verification.status as VerificationStatus)
+    : 'pending';
+  return {
+    status,
+    attempts: typeof verification.attempts === 'number' ? verification.attempts : 0,
+    lastError: typeof verification.lastError === 'string' ? verification.lastError : null,
+    transcriptPreview:
+      typeof verification.transcriptPreview === 'string' ? verification.transcriptPreview : null,
+  };
+}
+
+function normalizePreviousTake(input: unknown): SegmentAudioTake | null {
+  if (typeof input !== 'object' || input === null) {
+    return null;
+  }
+  const record = input as Record<string, unknown>;
+  if (typeof record.path !== 'string' || !record.path.trim()) {
+    return null;
+  }
+  return {
+    path: record.path,
+    take: Number.isFinite(Number(record.take)) ? Number(record.take) : 1,
+    createdAt: typeof record.createdAt === 'string' ? record.createdAt : null,
+    verification: normalizeVerification(record.verification),
+  };
+}
+
 function normalizeSegments(input: unknown): SegmentRecord[] {
   if (!Array.isArray(input)) {
     return [];
@@ -61,16 +92,6 @@ function normalizeSegments(input: unknown): SegmentRecord[] {
       const status = segmentStatuses.has(record.status as SegmentStatus)
         ? (record.status as SegmentStatus)
         : 'pending';
-      const verification =
-        typeof record.verification === 'object' && record.verification !== null
-          ? (record.verification as Record<string, unknown>)
-          : {};
-      const verificationStatus = verificationStatuses.has(
-        verification.status as VerificationStatus,
-      )
-        ? (verification.status as VerificationStatus)
-        : 'pending';
-
       if (!text.trim()) {
         return null;
       }
@@ -88,25 +109,20 @@ function normalizeSegments(input: unknown): SegmentRecord[] {
           typeof record.audioPath === 'string' && record.audioPath.trim()
             ? record.audioPath
             : `audio/segments/${id}-${speakerId}.wav`,
+        audioTake:
+          Number.isFinite(Number(record.audioTake)) && Number(record.audioTake) > 0
+            ? Number(record.audioTake)
+            : 1,
+        audioCreatedAt:
+          typeof record.audioCreatedAt === 'string' ? record.audioCreatedAt : null,
+        previousTake: normalizePreviousTake(record.previousTake),
         whisperTranscriptPath:
           typeof record.whisperTranscriptPath === 'string' &&
           record.whisperTranscriptPath.trim()
             ? record.whisperTranscriptPath
             : `tmp/whisper/${id}-${speakerId}.txt`,
         status,
-        verification: {
-          status: verificationStatus,
-          attempts:
-            typeof verification.attempts === 'number' ? verification.attempts : 0,
-          lastError:
-            typeof verification.lastError === 'string'
-              ? verification.lastError
-              : null,
-          transcriptPreview:
-            typeof verification.transcriptPreview === 'string'
-              ? verification.transcriptPreview
-              : null,
-        },
+        verification: normalizeVerification(record.verification),
         flagged: record.flagged === true,
       };
     })
@@ -132,11 +148,12 @@ export async function PUT(
   const onDisk = await readSegments(slug);
   const previous = new Map(onDisk.segments.map((segment) => [segment.id, segment]));
 
-  // Generation state (status + verification) belongs to the TTS worker, not to
-  // the editor, so it is taken from disk rather than from the browser's copy —
-  // which can be minutes stale, or mid-run. Only a segment that actually
-  // changed (new id, or edited text/speaker/emotion) is reset to pending so
-  // the worker regenerates it; everything else keeps the audio it already has.
+  // Generation state (status, verification, and which audio take is current)
+  // belongs to the TTS worker, not to the editor, so it is taken from disk
+  // rather than from the browser's copy — which can be minutes stale, or
+  // mid-run. Only a segment that actually changed (new id, or edited
+  // text/speaker/emotion) is reset to pending so the worker regenerates it;
+  // everything else keeps the audio it already has.
   const pendingVerification: SegmentVerification = {
     status: 'pending',
     attempts: 0,
@@ -152,7 +169,15 @@ export async function PUT(
       prior.emotion === segment.emotion;
 
     if (prior !== undefined && unchanged) {
-      return { ...segment, status: prior.status, verification: prior.verification };
+      return {
+        ...segment,
+        status: prior.status,
+        verification: prior.verification,
+        audioPath: prior.audioPath,
+        audioTake: prior.audioTake,
+        audioCreatedAt: prior.audioCreatedAt,
+        previousTake: prior.previousTake,
+      };
     }
 
     if (segment.status === 'skipped') {
@@ -189,6 +214,7 @@ export async function PUT(
         verifiedAudio: { status: 'pending', approvedAt: null },
         finalAudio: { status: 'pending', approvedAt: null },
         finalVideo: { status: 'pending', approvedAt: null },
+        metadata: { status: 'pending', approvedAt: null },
       },
       audio: { ...story.audio, status: 'pending' },
       video: { ...story.video, status: 'pending' },

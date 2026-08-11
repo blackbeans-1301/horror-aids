@@ -21,6 +21,7 @@ from common import (
     resolve_voice_wav,
     run_omnivoice_cpp,
     stop_requested,
+    utc_now,
 )
 
 
@@ -200,6 +201,65 @@ def main() -> int:
         audio_path = ctx.resolve(segment["audioPath"])
         return audio_path.exists() and audio_path.stat().st_size > 0
 
+    # A regeneration writes to a brand-new path instead of overwriting
+    # segment["audioPath"] in place — reusing the same filename is what made
+    # browsers keep serving cached old audio after a regenerate (see
+    # asset-stream.ts's Cache-Control fix, which only closes half the gap:
+    # WebKit's media cache is known to ignore Cache-Control for <audio>/<video>
+    # regardless). A brand-new URL sidesteps that entirely, and keeping the
+    # file it replaces as "previousTake" lets the operator switch back if the
+    # new take sounds worse. take_plans caches one plan per segment for the
+    # life of this run so retries reuse the same target instead of minting a
+    # new "next take" on every attempt.
+    take_plans: dict[str, dict[str, Any]] = {}
+
+    def plan_take(segment: dict[str, Any]) -> dict[str, Any]:
+        plan = take_plans.get(segment["id"])
+        if plan is not None:
+            return plan
+        current_take = int(segment.get("audioTake") or 1)
+        stem = f"{segment['id']}-{segment['speakerId']}"
+        plan = {
+            "previousPathRel": segment.get("audioPath"),
+            "previousTake": current_take,
+            "previousCreatedAt": segment.get("audioCreatedAt"),
+            "previousVerification": dict(segment.get("verification") or {}),
+            "nextTake": current_take + 1,
+            "nextPathRel": f"audio/segments/{stem}-t{current_take + 1}.wav",
+            "committed": False,
+        }
+        take_plans[segment["id"]] = plan
+        return plan
+
+    def commit_take(segment: dict[str, Any], plan: dict[str, Any]) -> None:
+        # Idempotent: pass 1 and pass 2 retries share one plan per segment, and
+        # only the attempt that actually produced audio should promote it.
+        if plan["committed"]:
+            return
+        plan["committed"] = True
+
+        previous_path_rel = plan["previousPathRel"]
+        if previous_path_rel and previous_path_rel != plan["nextPathRel"]:
+            previous_abs = ctx.resolve(previous_path_rel)
+            if previous_abs.exists() and previous_abs.stat().st_size > 0:
+                # Only two takes are ever kept — whatever was in previousTake
+                # before this run is about to be pushed out, so its file goes.
+                stale = segment.get("previousTake")
+                if stale and stale.get("path"):
+                    stale_abs = ctx.resolve(stale["path"])
+                    if stale_abs.exists() and stale_abs.resolve() != previous_abs.resolve():
+                        stale_abs.unlink(missing_ok=True)
+                segment["previousTake"] = {
+                    "path": previous_path_rel,
+                    "take": plan["previousTake"],
+                    "createdAt": plan["previousCreatedAt"],
+                    "verification": plan["previousVerification"],
+                }
+
+        segment["audioPath"] = plan["nextPathRel"]
+        segment["audioTake"] = plan["nextTake"]
+        segment["audioCreatedAt"] = utc_now()
+
     for segment in segments_file["segments"]:
         if segment.get("status") == "skipped":
             updated_segments.append(segment)
@@ -208,6 +268,12 @@ def main() -> int:
         if target_ids and segment["id"] not in target_ids:
             updated_segments.append(segment)
             continue
+
+        # Snapshot the take plan before any of the branches below reset
+        # segment["verification"] to pending for this run — otherwise a
+        # targeted regenerate's own reset would get captured as
+        # previousTake.verification instead of the real prior result.
+        plan_take(segment)
 
         if not target_ids:
             # A full (non-targeted) run resumes rather than restarts, and what
@@ -304,7 +370,8 @@ def main() -> int:
         # through the UI while this job is still running. Overwriting the
         # whole file with that stale snapshot would silently discard those
         # edits. So merge onto whatever is on disk *right now*: this job only
-        # owns status/verification, everything else comes from disk.
+        # owns status/verification/audio-take fields, everything else comes
+        # from disk.
         job_updates = {segment["id"]: segment for segment in updated_segments}
         disk_segments_file = ctx.read_json(story["text"]["segmentsPath"], {"segments": []})
         merged = []
@@ -318,6 +385,14 @@ def main() -> int:
                     **disk_segment,
                     "status": job_segment["status"],
                     "verification": job_segment["verification"],
+                    "audioPath": job_segment.get("audioPath", disk_segment.get("audioPath")),
+                    "audioTake": job_segment.get("audioTake", disk_segment.get("audioTake")),
+                    "audioCreatedAt": job_segment.get(
+                        "audioCreatedAt", disk_segment.get("audioCreatedAt")
+                    ),
+                    "previousTake": job_segment.get(
+                        "previousTake", disk_segment.get("previousTake")
+                    ),
                 }
             )
         ctx.write_json(story["text"]["segmentsPath"], {"segments": merged})
@@ -340,16 +415,18 @@ def main() -> int:
         if verify_enabled and attempts >= max_attempts:
             retry_queue.append((segment, character))
             continue
+        plan = plan_take(segment)
         try:
             segment["status"] = "generating"
             ctx.log(f"segment {segment['id']} attempt {attempts + 1}: generating voice {character['voice']}")
             call_omnivoice(
                 ctx,
-                ctx.resolve(segment["audioPath"]),
+                ctx.resolve(plan["nextPathRel"]),
                 segment["text"],
                 character["voice"],
                 config,
             )
+            commit_take(segment, plan)
             generated_count += 1
             if not verify_enabled:
                 accept_without_verification(segment, attempts + 1)
@@ -393,7 +470,8 @@ def main() -> int:
         if stop_requested():
             ctx.log("stop requested; halting retries for this run")
             break
-        audio_path = ctx.resolve(segment["audioPath"])
+        plan = plan_take(segment)
+        audio_path = ctx.resolve(plan["nextPathRel"])
         transcript_path = ctx.resolve(segment["whisperTranscriptPath"])
         passed = False
         last_error = segment.get("verification", {}).get("lastError")
@@ -414,6 +492,7 @@ def main() -> int:
                     character["voice"],
                     config,
                 )
+                commit_take(segment, plan)
                 generated_count += 1
                 if not verify_enabled:
                     accept_without_verification(segment, attempts)

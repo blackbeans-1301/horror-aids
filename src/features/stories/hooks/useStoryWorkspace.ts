@@ -9,6 +9,7 @@ import type {
   SegmentRecord,
   StoryDetail,
   VideoPlanFile,
+  YoutubeMetadataFile,
 } from '@/types/story';
 
 export type TabId =
@@ -18,6 +19,7 @@ export type TabId =
   | 'segments'
   | 'audio'
   | 'video'
+  | 'metadata'
   | 'analytics'
   | 'logs';
 
@@ -39,6 +41,9 @@ function createEmptySegment(order: number, speakerId = 'narrator'): SegmentRecor
     text: '',
     emotion: speakerId === 'narrator' ? 'storytelling' : 'natural',
     audioPath: `audio/segments/${id}-${speakerId}.wav`,
+    audioTake: 1,
+    audioCreatedAt: null,
+    previousTake: null,
     whisperTranscriptPath: `tmp/whisper/${id}-${speakerId}.txt`,
     status: 'pending',
     verification: {
@@ -59,15 +64,28 @@ export function useStoryWorkspace(slug: string) {
   const [characters, setCharacters] = useState<CharacterRecord[]>([]);
   const [segments, setSegments] = useState<SegmentRecord[]>([]);
   const [videoPlan, setVideoPlan] = useState<VideoPlanFile | null>(null);
+  const [youtubeMetadata, setYoutubeMetadata] = useState<YoutubeMetadataFile | null>(null);
   const [selectedJobId, setSelectedJobId] = useState<string>('');
   const [jobLog, setJobLog] = useState<string>('');
   const [isBusy, setIsBusy] = useState<boolean>(false);
   // Unsaved local edits must survive the 3s polling refresh; each flag blocks
   // the server snapshot from overwriting that piece of state until saved.
-  const dirtyRef = useRef({ story: false, characters: false, segments: false, videoPlan: false });
+  const dirtyRef = useRef({
+    story: false,
+    characters: false,
+    segments: false,
+    videoPlan: false,
+    youtubeMetadata: false,
+  });
   // Mirrors dirtyRef for the UI (refs don't trigger re-renders).
-  const [dirty, setDirty] = useState({ story: false, characters: false, segments: false, videoPlan: false });
-  type DirtyKey = 'story' | 'characters' | 'segments' | 'videoPlan';
+  const [dirty, setDirty] = useState({
+    story: false,
+    characters: false,
+    segments: false,
+    videoPlan: false,
+    youtubeMetadata: false,
+  });
+  type DirtyKey = 'story' | 'characters' | 'segments' | 'videoPlan' | 'youtubeMetadata';
   const markDirty = useCallback((key: DirtyKey): void => {
     dirtyRef.current[key] = true;
     setDirty((current) => ({ ...current, [key]: true }));
@@ -94,6 +112,9 @@ export function useStoryWorkspace(slug: string) {
       }
       if (!dirtyRef.current.videoPlan) {
         setVideoPlan(nextDetail.videoPlan);
+      }
+      if (!dirtyRef.current.youtubeMetadata) {
+        setYoutubeMetadata(nextDetail.youtubeMetadata);
       }
       setSelectedJobId((current) => current || nextDetail.recentJobs[0]?.id || '');
       setLoadError('');
@@ -249,6 +270,11 @@ export function useStoryWorkspace(slug: string) {
     Boolean(videoPlan?.sceneVideoId) &&
     !hasActiveJob &&
     !isArchived;
+  // Metadata generation only needs the story text (videoDurationMs is
+  // optional context for the prompt, fine as null this early) — it doesn't
+  // need to wait for video assembly, which can happen independently after.
+  const canGenerateMetadata = verifiedApproval === 'approved' && !isBusy && !isArchived;
+  const canApproveMetadata = youtubeMetadata?.status === 'generated' && !isArchived;
 
   const runAction = useCallback(
     async (action: () => Promise<void>, successMessage = ''): Promise<void> => {
@@ -348,6 +374,19 @@ export function useStoryWorkspace(slug: string) {
     [segments, slug],
   );
 
+  // Unlike flag toggling, this changes which audio file is "current" — the
+  // server derives the resulting status/verification from the take being
+  // switched to, so the fresh segments come back through refresh() rather
+  // than being predicted optimistically here.
+  const selectSegmentTake = useCallback(
+    async (segmentId: string): Promise<void> => {
+      await runAction(async () => {
+        await storiesApi.selectSegmentTake(slug, segmentId);
+      }, 'Switched audio take.');
+    },
+    [runAction, slug],
+  );
+
   const approveSegments = useCallback(async (): Promise<void> => {
     await runAction(
       () => storiesApi.approveSegments(slug),
@@ -442,6 +481,39 @@ export function useStoryWorkspace(slug: string) {
     },
     [runAction, slug],
   );
+
+  const updateYoutubeMetadata = useCallback(
+    (patch: Partial<YoutubeMetadataFile>): void => {
+      markDirty('youtubeMetadata');
+      setYoutubeMetadata((current) => (current ? { ...current, ...patch } : current));
+    },
+    [markDirty],
+  );
+
+  const saveYoutubeMetadata = useCallback(async (): Promise<void> => {
+    if (!youtubeMetadata) {
+      return;
+    }
+    await runAction(async () => {
+      const saved = await storiesApi.saveYoutubeMetadata(slug, youtubeMetadata);
+      setYoutubeMetadata(saved);
+      clearDirty('youtubeMetadata');
+    }, 'Đã lưu metadata.');
+  }, [clearDirty, runAction, slug, youtubeMetadata]);
+
+  const generateYoutubeMetadata = useCallback(async (): Promise<void> => {
+    await runAction(async () => {
+      const next = await storiesApi.generateYoutubeMetadata(slug);
+      setYoutubeMetadata(next);
+      clearDirty('youtubeMetadata');
+    }, 'Đã generate metadata YouTube.');
+  }, [clearDirty, runAction, slug]);
+
+  const approveYoutubeMetadata = useCallback(async (): Promise<void> => {
+    await runAction(async () => {
+      await storiesApi.approveYoutubeMetadata(slug);
+    }, 'Đã duyệt metadata. Story sẵn sàng để đăng YouTube.');
+  }, [runAction, slug]);
 
   const syncFromLibrary = useCallback(async (): Promise<void> => {
     await runAction(
@@ -619,6 +691,7 @@ export function useStoryWorkspace(slug: string) {
     segments,
     videoPlan,
     videoRenders: detail?.videoRenders ?? [],
+    youtubeMetadata,
     selectedJobId,
     selectedJob,
     jobLog,
@@ -647,6 +720,8 @@ export function useStoryWorkspace(slug: string) {
     canConfirmVerified,
     canConcat,
     canRenderVideo,
+    canGenerateMetadata,
+    canApproveMetadata,
     refresh,
     startJob,
     stopJob,
@@ -666,6 +741,10 @@ export function useStoryWorkspace(slug: string) {
     revealFinalVideo,
     selectVideoRender,
     deleteVideoRender,
+    updateYoutubeMetadata,
+    saveYoutubeMetadata,
+    generateYoutubeMetadata,
+    approveYoutubeMetadata,
     syncFromLibrary,
     loadJobLog,
     updateCharacter,
@@ -678,6 +757,7 @@ export function useStoryWorkspace(slug: string) {
     splitSegment,
     mergeWithNext,
     toggleSegmentFlag,
+    selectSegmentTake,
   };
 }
 

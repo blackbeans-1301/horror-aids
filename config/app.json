@@ -62,5 +62,14 @@
     "grade": { "brightness": -0.05, "saturation": 0.85, "vignette": true },
     "ducking": { "enabled": true, "threshold": 0.05, "ratio": 6, "attackMs": 50, "releaseMs": 1000 },
     "defaultGainDb": { "introMusic": -3, "bgMusic": -22, "rainAmbience": -26 }
+  },
+  "youtubeMetadata": {
+    "model": "gpt-5.6-sol",
+    "titleVariantCount": 5,
+    "titleMaxChars": 100,
+    "thumbnailPromptVariantCount": 2,
+    "tagsMaxCount": 30,
+    "tone": "kể chuyện ma, giọng radio đêm khuya, rùng rợn nhưng không giật gân rẻ tiền, không spoil đoạn kết hay lời giải bí ẩn của truyện",
+    "targetAudience": "người Việt 18-35 tuổi thích nghe truyện ma khi ngủ, lái xe, hoặc làm việc"
   }
 }

@@ -1,4 +1,4 @@
-import { AudioLines, Check, Download, Flag, FolderOpen, Play, RefreshCw } from 'lucide-react';
+import { AudioLines, Check, Download, Flag, FolderOpen, History, Play, RefreshCw } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
 
 import { StoryPlayer } from '@/features/stories/components/workspace/StoryPlayer';
@@ -94,6 +94,7 @@ interface AudioTabProps {
   onSegmentEnded: () => void;
   onPlayFromSegment: (segmentId: string) => void;
   onToggleSegmentFlag: (segmentId: string) => void;
+  onSelectSegmentTake: (segmentId: string) => void;
 }
 
 export const AudioTab: React.FC<AudioTabProps> = ({
@@ -118,6 +119,7 @@ export const AudioTab: React.FC<AudioTabProps> = ({
   onSegmentEnded,
   onPlayFromSegment,
   onToggleSegmentFlag,
+  onSelectSegmentTake,
 }) => {
   const [showFlaggedOnly, setShowFlaggedOnly] = useState(false);
   const flaggedCount = segments.filter((segment) => segment.flagged).length;
@@ -231,13 +233,14 @@ export const AudioTab: React.FC<AudioTabProps> = ({
             <th>Speaker</th>
             <th>Verification</th>
             <th>Duration</th>
+            <th>Previous take</th>
             <th />
           </tr>
         </thead>
         <tbody>
           {visibleSegments.length === 0 ? (
             <tr>
-              <td colSpan={7} className="label">
+              <td colSpan={8} className="label">
                 No flagged segments.
               </td>
             </tr>
@@ -293,6 +296,29 @@ export const AudioTab: React.FC<AudioTabProps> = ({
                   <AudioDurationCell src={assetUrl(slug, segmentAudioPath(segment))} />
                 ) : (
                   <span className="label">No audio</span>
+                )}
+              </td>
+              <td>
+                {segment.previousTake ? (
+                  <div className="button-row">
+                    <audio
+                      controls
+                      preload="none"
+                      style={{ height: 28, width: 160 }}
+                      src={assetUrl(slug, segment.previousTake.path)}
+                    />
+                    <button
+                      className="button secondary"
+                      type="button"
+                      title="Switch this segment back to its previous audio take"
+                      onClick={() => onSelectSegmentTake(segment.id)}
+                    >
+                      <History size={15} aria-hidden="true" />
+                      Use this take
+                    </button>
+                  </div>
+                ) : (
+                  <span className="label">—</span>
                 )}
               </td>
               <td>

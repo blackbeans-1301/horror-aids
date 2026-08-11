@@ -93,7 +93,7 @@ export async function serveFile(
   const baseHeaders = {
     'content-type': contentType,
     'accept-ranges': 'bytes',
-    'cache-control': 'private, max-age=3600',
+    'cache-control': 'private, no-cache',
     etag,
     'last-modified': stat.mtime.toUTCString(),
   };

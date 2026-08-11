@@ -10,6 +10,7 @@ import {
   Scissors,
   Terminal,
   Users,
+  Youtube,
 } from 'lucide-react';
 import React from 'react';
 
@@ -20,6 +21,7 @@ import { AnalyticsTab } from '@/features/stories/components/workspace/AnalyticsT
 import { AudioTab } from '@/features/stories/components/workspace/AudioTab';
 import { CharactersTab } from '@/features/stories/components/workspace/CharactersTab';
 import { LogsTab } from '@/features/stories/components/workspace/LogsTab';
+import { MetadataTab } from '@/features/stories/components/workspace/MetadataTab';
 import { OverviewTab } from '@/features/stories/components/workspace/OverviewTab';
 import { SegmentsTab } from '@/features/stories/components/workspace/SegmentsTab';
 import { StoryTab } from '@/features/stories/components/workspace/StoryTab';
@@ -38,6 +40,7 @@ const tabs: Array<{ id: TabId; label: string; icon: React.ReactNode }> = [
   { id: 'segments', label: 'Segments', icon: <Scissors size={15} aria-hidden="true" /> },
   { id: 'audio', label: 'Audio', icon: <AudioLines size={15} aria-hidden="true" /> },
   { id: 'video', label: 'Video', icon: <Clapperboard size={15} aria-hidden="true" /> },
+  { id: 'metadata', label: 'Metadata', icon: <Youtube size={15} aria-hidden="true" /> },
   { id: 'analytics', label: 'Analytics', icon: <BarChart3 size={15} aria-hidden="true" /> },
   { id: 'logs', label: 'Logs', icon: <Terminal size={15} aria-hidden="true" /> },
 ];
@@ -56,6 +59,7 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
     segments,
     videoPlan,
     videoRenders,
+    youtubeMetadata,
     selectedJob,
     jobLog,
     isBusy,
@@ -83,6 +87,8 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
     canConfirmVerified,
     canConcat,
     canRenderVideo,
+    canGenerateMetadata,
+    canApproveMetadata,
     startJob,
     stopJob,
     saveStory,
@@ -101,6 +107,10 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
     revealFinalVideo,
     selectVideoRender,
     deleteVideoRender,
+    updateYoutubeMetadata,
+    saveYoutubeMetadata,
+    generateYoutubeMetadata,
+    approveYoutubeMetadata,
     syncFromLibrary,
     loadJobLog,
     updateCharacter,
@@ -113,6 +123,7 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
     splitSegment,
     mergeWithNext,
     toggleSegmentFlag,
+    selectSegmentTake,
   } = workspace;
 
   // Save/Process/Generate are already gated server-side for archived
@@ -209,6 +220,7 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
               </span>
               <span className="badge">final audio {detail?.story.approvals.finalAudio.status ?? 'pending'}</span>
               <span className="badge">final video {detail?.story.approvals.finalVideo.status ?? 'pending'}</span>
+              <span className="badge">metadata {detail?.story.approvals.metadata.status ?? 'pending'}</span>
             </p>
           </div>
           <div className="button-row">
@@ -339,6 +351,7 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
             onSegmentEnded={handleSegmentEnded}
             onPlayFromSegment={playFromSegment}
             onToggleSegmentFlag={(segmentId) => void toggleSegmentFlag(segmentId)}
+            onSelectSegmentTake={(segmentId) => void selectSegmentTake(segmentId)}
           />
         ) : null}
 
@@ -362,6 +375,21 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
             onRevealFinalVideo={() => void revealFinalVideo()}
             onSelectRender={(jobId) => void selectVideoRender(jobId)}
             onDeleteRender={(jobId) => void deleteVideoRender(jobId)}
+          />
+        ) : null}
+
+        {activeTab === 'metadata' ? (
+          <MetadataTab
+            metadata={youtubeMetadata}
+            isDirty={dirty.youtubeMetadata}
+            isBusy={effectiveBusy}
+            canGenerate={canGenerateMetadata}
+            canApprove={canApproveMetadata}
+            metadataApprovalStatus={detail?.story.approvals.metadata.status ?? 'pending'}
+            onUpdate={updateYoutubeMetadata}
+            onSave={() => void saveYoutubeMetadata()}
+            onGenerate={() => void generateYoutubeMetadata()}
+            onApprove={() => void approveYoutubeMetadata()}
           />
         ) : null}
 
