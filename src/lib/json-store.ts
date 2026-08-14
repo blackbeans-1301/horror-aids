@@ -6,7 +6,8 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 
 import { probeIntegratedLufs, probeMediaMetadata } from '@/lib/media-probe';
-import { generateYoutubeMetadataFields } from '@/lib/openai-metadata';
+import { ALL_YOUTUBE_METADATA_FIELD_GROUPS, generateYoutubeMetadataFields } from '@/lib/openai-metadata';
+import { normalizeStoryText } from '@/lib/text-normalize';
 import { renderYoutubeDescription, slugifyForHashtag } from '@/lib/youtube-description';
 import {
   configRoot,
@@ -26,6 +27,7 @@ import type {
   ApprovalStatus,
   AudioMediaAsset,
   CharactersFile,
+  GradeOverride,
   JobRecord,
   JobsFile,
   JobStatus,
@@ -48,6 +50,7 @@ import type {
   VideoRenderSummary,
   VoiceRecord,
   VoicesFile,
+  YoutubeMetadataFieldGroup,
   YoutubeMetadataFile,
 } from '@/types/story';
 
@@ -66,25 +69,29 @@ interface VideoAppConfig {
   tailOutMs?: number;
   transitionMs?: number;
   defaultGainDb?: { introMusic?: number; bgMusic?: number; rainAmbience?: number };
+  grade?: { brightness?: number; saturation?: number; vignette?: boolean };
 }
 
-const DEFAULT_VIDEO_CONFIG: Required<Omit<VideoAppConfig, 'defaultGainDb'>> & {
+const DEFAULT_VIDEO_CONFIG: Required<Omit<VideoAppConfig, 'defaultGainDb' | 'grade'>> & {
   defaultGainDb: Required<NonNullable<VideoAppConfig['defaultGainDb']>>;
+  grade: Required<NonNullable<VideoAppConfig['grade']>>;
 } = {
   introDurationMs: 10000,
   leadInMs: 800,
   tailOutMs: 4000,
   transitionMs: 1000,
   defaultGainDb: { introMusic: -3, bgMusic: -22, rainAmbience: -26 },
+  grade: { brightness: -0.05, saturation: 0.85, vignette: true },
 };
 
-async function readVideoAppConfig(): Promise<typeof DEFAULT_VIDEO_CONFIG> {
+export async function readVideoAppConfig(): Promise<typeof DEFAULT_VIDEO_CONFIG> {
   const configPath = path.join(configRoot, 'app.json');
   const config = await readJsonFile<{ video?: VideoAppConfig }>(configPath, {});
   return {
     ...DEFAULT_VIDEO_CONFIG,
     ...config.video,
     defaultGainDb: { ...DEFAULT_VIDEO_CONFIG.defaultGainDb, ...config.video?.defaultGainDb },
+    grade: { ...DEFAULT_VIDEO_CONFIG.grade, ...config.video?.grade },
   };
 }
 
@@ -441,7 +448,10 @@ export async function createStory(input: {
   };
 
   await writeJsonFile(resolveStoryPath(slug, 'story.json'), story);
-  await writeTextFile(resolveStoryPath(slug, story.text.storyPath), input.storyText ?? '');
+  await writeTextFile(
+    resolveStoryPath(slug, story.text.storyPath),
+    normalizeStoryText(input.storyText ?? ''),
+  );
   await writeJsonFile<CharactersFile>(resolveStoryPath(slug, story.text.charactersPath), {
     characters: [
       {
@@ -608,7 +618,10 @@ export async function readStoryText(slug: string): Promise<string> {
 
 export async function writeStoryText(slug: string, storyText: string): Promise<void> {
   const story = await readStory(slug);
-  await writeTextFile(resolveStoryPath(slug, story.text.storyPath), storyText);
+  await writeTextFile(
+    resolveStoryPath(slug, story.text.storyPath),
+    normalizeStoryText(storyText),
+  );
   // Deliberately does not touch video/plan.json or video/intro.jpg — those are
   // expensive human choices that remain valid across a text edit + re-render.
   await patchStory(slug, (current) => ({
@@ -832,7 +845,15 @@ export async function deleteVoice(id: string): Promise<void> {
 
 export async function readMediaLibrary(): Promise<MediaLibraryFile> {
   await ensureDataFiles();
-  return readJsonFile<MediaLibraryFile>(mediaManifestPath, { schemaVersion: 1, media: [] });
+  const library = await readJsonFile<MediaLibraryFile>(mediaManifestPath, { schemaVersion: 1, media: [] });
+  return {
+    ...library,
+    media: library.media.map((asset) =>
+      asset.category === 'scene_video' && !asset.gradeOverride
+        ? { ...asset, gradeOverride: { brightness: null, vignette: null } }
+        : asset,
+    ),
+  };
 }
 
 async function writeMediaLibrary(library: MediaLibraryFile): Promise<void> {
@@ -919,6 +940,7 @@ export async function addMediaAsset(input: {
       height: probe.height,
       fps: probe.fps,
       hasAudioStream: probe.hasAudioStream,
+      gradeOverride: { brightness: null, vignette: null },
     } satisfies VideoMediaAsset;
   } else {
     const config = await readVideoAppConfig();
@@ -956,6 +978,7 @@ export async function updateMediaAsset(
     notes?: string;
     loopable?: boolean;
     defaultGainDb?: number;
+    gradeOverride?: GradeOverride;
   },
 ): Promise<MediaAsset> {
   const library = await readMediaLibrary();
@@ -991,7 +1014,15 @@ export async function updateMediaAsset(
 
   let nextAsset: MediaAsset;
   if (current.category === 'scene_video') {
-    nextAsset = { ...current, path: nextPath, name, source, notes, loopable };
+    nextAsset = {
+      ...current,
+      path: nextPath,
+      name,
+      source,
+      notes,
+      loopable,
+      gradeOverride: patch.gradeOverride ?? current.gradeOverride,
+    };
   } else {
     nextAsset = {
       ...current,
@@ -1151,6 +1182,8 @@ async function buildDefaultVideoPlan(): Promise<VideoPlanFile> {
     tailOutMs: config.tailOutMs,
     transitionMs: config.transitionMs,
     duckingEnabled: true,
+    gradeOverride: { brightness: null, vignette: null },
+    gainManuallyEdited: false,
     updatedAt: new Date().toISOString(),
   };
 }
@@ -1169,7 +1202,13 @@ export async function writeVideoPlan(slug: string, plan: VideoPlanFile): Promise
 export async function readVideoPlanOrDefaults(slug: string): Promise<VideoPlanFile> {
   const existing = await readVideoPlanRaw(slug);
   if (existing) {
-    return existing;
+    // Legacy plans predate gainManuallyEdited/gradeOverride — backfill both
+    // so approve-final-audio and grade resolution never see undefined.
+    return {
+      ...existing,
+      gainManuallyEdited: existing.gainManuallyEdited ?? false,
+      gradeOverride: existing.gradeOverride ?? { brightness: null, vignette: null },
+    };
   }
   const seeded = await buildDefaultVideoPlan();
   return writeVideoPlan(slug, seeded);
@@ -1188,7 +1227,57 @@ export async function randomizeVideoPlan(slug: string): Promise<VideoPlanFile> {
     transitionMs: current.transitionMs,
     duckingEnabled: current.duckingEnabled,
     introImagePath: current.introImagePath,
+    // A story-level grade tweak is a deliberate creative choice independent
+    // of which random scene video gets picked — preserve it like the other
+    // operator-tuned fields above.
+    gradeOverride: current.gradeOverride,
+    // gainManuallyEdited intentionally NOT preserved from `current` — a
+    // reroll adopts the newly-picked assets' own defaultGainDb (via
+    // `seeded`), so any prior hand-tuning no longer corresponds to what's
+    // playing; treat this like a fresh plan and re-open auto-sync.
   });
+}
+
+// Called from approve-final-audio: if the operator never hand-tuned this
+// story's gain, pull each referenced asset's *current* library defaultGainDb
+// in — the one moment a story's stale gain (baked in whenever the plan was
+// built/last saved) gets refreshed. A manual edit opts a story out
+// permanently until the operator randomizes or resets the flag.
+export async function syncVideoPlanGainToLibraryDefaults(slug: string): Promise<VideoPlanFile> {
+  const plan = await readVideoPlanOrDefaults(slug);
+  if (plan.gainManuallyEdited) {
+    return plan;
+  }
+
+  const { media } = await readMediaLibrary();
+  const byId = new Map(media.map((asset) => [asset.id, asset]));
+
+  const resolveGain = (
+    id: string | null,
+    category: 'bg_music' | 'rain_ambience' | 'intro_music',
+    fallback: number,
+  ): number => {
+    if (!id) return fallback;
+    const asset = byId.get(id);
+    return asset && asset.category === category ? (asset as AudioMediaAsset).defaultGainDb : fallback;
+  };
+
+  return writeVideoPlan(slug, {
+    ...plan,
+    bgMusicGainDb: resolveGain(plan.bgMusicId, 'bg_music', plan.bgMusicGainDb),
+    rainAmbienceGainDb: resolveGain(plan.rainAmbienceId, 'rain_ambience', plan.rainAmbienceGainDb),
+    introMusicGainDb: resolveGain(plan.introMusicId, 'intro_music', plan.introMusicGainDb),
+  });
+}
+
+// Operator-initiated opt-back-in: clears the manual-edit flag and immediately
+// pulls the library's current defaults, without waiting for the next
+// approve-final-audio. Used by the "Reset to library defaults" action in the
+// Video tab, shown only once a story's gain has been hand-edited.
+export async function resetVideoPlanGainToLibraryDefaults(slug: string): Promise<VideoPlanFile> {
+  const plan = await readVideoPlanOrDefaults(slug);
+  await writeVideoPlan(slug, { ...plan, gainManuallyEdited: false });
+  return syncVideoPlanGainToLibraryDefaults(slug);
 }
 
 // --- Video render history — render_video.py never overwrites a previous
@@ -1306,22 +1395,40 @@ const DEFAULT_YOUTUBE_METADATA: YoutubeMetadataFile = {
   sourceSnapshot: null,
   titles: [],
   selectedTitleIndex: 0,
-  contextHook: '',
   teaser: '',
   tags: [],
   category: '',
   thumbnailPrompts: [],
-  pinnedComment: '',
+  pinnedComment: [],
+  selectedPinnedCommentIndex: 0,
   storyHashtag: '',
   renderedDescription: '',
   error: null,
 };
 
+// Upgrades on-disk shapes from before pinnedComment became a variant array
+// (and before contextHook was dropped) — the stray contextHook key, if
+// present, is simply absent from this type and gets dropped on next write.
+function normalizeYoutubeMetadata(raw: YoutubeMetadataFile): YoutubeMetadataFile {
+  const rawPinnedComment = (raw as unknown as { pinnedComment?: unknown }).pinnedComment;
+  const pinnedComment = Array.isArray(rawPinnedComment)
+    ? (rawPinnedComment as string[])
+    : typeof rawPinnedComment === 'string' && rawPinnedComment
+      ? [rawPinnedComment]
+      : [];
+  return {
+    ...raw,
+    pinnedComment,
+    selectedPinnedCommentIndex: raw.selectedPinnedCommentIndex ?? 0,
+  };
+}
+
 export async function readYoutubeMetadataOrDefault(slug: string): Promise<YoutubeMetadataFile> {
-  return readJsonFile<YoutubeMetadataFile>(
+  const raw = await readJsonFile<YoutubeMetadataFile>(
     resolveStoryPath(slug, youtubeMetadataRelativePath()),
     DEFAULT_YOUTUBE_METADATA,
   );
+  return normalizeYoutubeMetadata(raw);
 }
 
 async function writeYoutubeMetadataFile(
@@ -1334,14 +1441,13 @@ async function writeYoutubeMetadataFile(
 
 async function rerenderDescription(
   slug: string,
-  fields: { titles: string[]; selectedTitleIndex: number; contextHook: string; teaser: string },
+  fields: { titles: string[]; selectedTitleIndex: number; teaser: string },
 ): Promise<{ storyHashtag: string; renderedDescription: string }> {
   const story = await readStory(slug);
   const storyHashtag = slugifyForHashtag(story.title);
   const selectedTitle = fields.titles[fields.selectedTitleIndex] ?? fields.titles[0] ?? story.title;
   const renderedDescription = await renderYoutubeDescription({
     title: selectedTitle,
-    contextHook: fields.contextHook,
     teaser: fields.teaser,
     storyHashtag,
   });
@@ -1349,12 +1455,22 @@ async function rerenderDescription(
 }
 
 // Calls out to OpenAI for the story-specific fields (titles, teaser, tags,
-// thumbnail prompts, pinned comment), then renders the fixed channel
-// description template around them. A failed OpenAI call is recorded on the
-// metadata file (status 'failed' + error) rather than left silently
-// unresolved, so the UI can show why generation didn't produce anything.
-export async function generateYoutubeMetadata(slug: string): Promise<YoutubeMetadataFile> {
+// thumbnail prompts, pinned comment). When `fieldGroups` is omitted/empty,
+// regenerates everything (a full first-generation or an explicit "generate
+// all" from the operator); otherwise only the requested groups are
+// regenerated and merged into the existing file, leaving every other field
+// untouched. A failed OpenAI call is recorded on the metadata file (status
+// 'failed' + error) rather than left silently unresolved, so the UI can show
+// why generation didn't produce anything.
+export async function generateYoutubeMetadata(
+  slug: string,
+  fieldGroups?: YoutubeMetadataFieldGroup[],
+): Promise<YoutubeMetadataFile> {
+  const requested = (fieldGroups ?? []).filter((group) => ALL_YOUTUBE_METADATA_FIELD_GROUPS.includes(group));
+  const groups = requested.length > 0 ? requested : ALL_YOUTUBE_METADATA_FIELD_GROUPS;
+
   const [story, storyText] = await Promise.all([readStory(slug), readStoryText(slug)]);
+  const current = await readYoutubeMetadataOrDefault(slug);
 
   let fields;
   try {
@@ -1362,11 +1478,11 @@ export async function generateYoutubeMetadata(slug: string): Promise<YoutubeMeta
       title: story.title,
       storyText,
       videoDurationMs: story.video.durationMs,
+      fieldGroups: groups,
     });
   } catch (error) {
-    const currentMetadata = await readYoutubeMetadataOrDefault(slug);
     const failed: YoutubeMetadataFile = {
-      ...currentMetadata,
+      ...current,
       status: 'failed',
       error: error instanceof Error ? error.message : 'OpenAI request failed',
     };
@@ -1378,55 +1494,58 @@ export async function generateYoutubeMetadata(slug: string): Promise<YoutubeMeta
     throw error;
   }
 
-  const { storyHashtag, renderedDescription } = await rerenderDescription(slug, {
-    titles: fields.titles,
-    selectedTitleIndex: 0,
-    contextHook: fields.contextHook,
-    teaser: fields.teaser,
-  });
-
   const storyTextHash = crypto.createHash('sha256').update(storyText).digest('hex');
 
-  const next: YoutubeMetadataFile = {
-    schemaVersion: 1,
-    status: 'generated',
-    generatedAt: new Date().toISOString(),
-    model: fields.model,
-    sourceSnapshot: {
-      storyTitle: story.title,
-      videoDurationMs: story.video.durationMs,
-      storyTextHash,
-    },
-    titles: fields.titles,
-    selectedTitleIndex: 0,
-    contextHook: fields.contextHook,
-    teaser: fields.teaser,
-    tags: fields.tags,
-    category: fields.category,
-    thumbnailPrompts: fields.thumbnailPrompts,
-    pinnedComment: fields.pinnedComment,
-    storyHashtag,
-    renderedDescription,
-    error: null,
+  const merged: YoutubeMetadataFile = { ...current };
+  if (fields.titles) {
+    merged.titles = fields.titles;
+    merged.selectedTitleIndex = 0;
+  }
+  if (fields.teaser !== undefined) merged.teaser = fields.teaser;
+  if (fields.tags) merged.tags = fields.tags;
+  if (fields.category !== undefined) merged.category = fields.category;
+  if (fields.thumbnailPrompts) merged.thumbnailPrompts = fields.thumbnailPrompts;
+  if (fields.pinnedComment) {
+    merged.pinnedComment = fields.pinnedComment;
+    merged.selectedPinnedCommentIndex = 0;
+  }
+  merged.schemaVersion = 1;
+  merged.model = fields.model;
+  merged.status = 'generated';
+  merged.generatedAt = new Date().toISOString();
+  merged.error = null;
+  merged.sourceSnapshot = {
+    storyTitle: story.title,
+    videoDurationMs: story.video.durationMs,
+    storyTextHash,
   };
 
-  await writeYoutubeMetadataFile(slug, next);
-  // A fresh generation always needs a fresh look before shipping — reset any
-  // approval left over from a previous generation/edit round.
-  await patchStory(slug, (current) => ({
-    ...current,
-    metadata: { ...current.metadata, status: 'generated' },
-    approvals: { ...current.approvals, metadata: { status: 'pending', approvedAt: null } },
+  const { storyHashtag, renderedDescription } = await rerenderDescription(slug, {
+    titles: merged.titles,
+    selectedTitleIndex: merged.selectedTitleIndex,
+    teaser: merged.teaser,
+  });
+  merged.storyHashtag = storyHashtag;
+  merged.renderedDescription = renderedDescription;
+
+  await writeYoutubeMetadataFile(slug, merged);
+  // A fresh generation — full or partial — always needs a fresh look before
+  // shipping: reset any approval left over from a previous generation/edit
+  // round.
+  await patchStory(slug, (currentStory) => ({
+    ...currentStory,
+    metadata: { ...currentStory.metadata, status: 'generated' },
+    approvals: { ...currentStory.approvals, metadata: { status: 'pending', approvedAt: null } },
   }));
 
-  return next;
+  return merged;
 }
 
-// Operator edits after generation (swap which title variant is primary,
-// tweak the teaser, fix a tag). Recomputes the rendered description any time
-// a field that feeds the template changes, and — like a fresh generation —
-// invalidates any existing approval, since the approved text is no longer
-// what's on disk.
+// Operator edits after generation (swap which title/pinned-comment variant is
+// primary, tweak the teaser, fix a tag). Recomputes the rendered description
+// any time a field that feeds the template changes, and — like a
+// generation — invalidates any existing approval, since the approved text is
+// no longer what's on disk.
 export async function updateYoutubeMetadata(
   slug: string,
   patch: Partial<
@@ -1434,12 +1553,12 @@ export async function updateYoutubeMetadata(
       YoutubeMetadataFile,
       | 'titles'
       | 'selectedTitleIndex'
-      | 'contextHook'
       | 'teaser'
       | 'tags'
       | 'category'
       | 'thumbnailPrompts'
       | 'pinnedComment'
+      | 'selectedPinnedCommentIndex'
     >
   >,
 ): Promise<YoutubeMetadataFile> {
@@ -1448,7 +1567,6 @@ export async function updateYoutubeMetadata(
   const { storyHashtag, renderedDescription } = await rerenderDescription(slug, {
     titles: merged.titles,
     selectedTitleIndex: merged.selectedTitleIndex,
-    contextHook: merged.contextHook,
     teaser: merged.teaser,
   });
   const next: YoutubeMetadataFile = { ...merged, storyHashtag, renderedDescription };

@@ -4,9 +4,15 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Archive, AudioLines, BookOpen, Clapperboard, FilePlus2, FileUp, ListChecks, Trash2 } from 'lucide-react';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { toast } from 'react-toastify';
+import { toast } from 'sonner';
 
 import { useConfirm } from '@/components/ConfirmDialog';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { storiesApi } from '@/features/stories/api/storiesApi';
 import { AppShell } from '@/features/stories/components/AppShell';
 import { readStoryFilesAsText } from '@/features/stories/utils/readStoryFiles';
@@ -163,10 +169,12 @@ export const DashboardClient: React.FC = () => {
             </p>
           </div>
           <div className="button-row">
-            <Link className="button secondary" href="/library">
-              <BookOpen size={16} aria-hidden="true" />
-              Sync từ Thư viện
-            </Link>
+            <Button asChild variant="secondary">
+              <Link href="/library">
+                <BookOpen size={16} aria-hidden="true" />
+                Sync từ Thư viện
+              </Link>
+            </Button>
           </div>
         </div>
 
@@ -176,57 +184,57 @@ export const DashboardClient: React.FC = () => {
           ))}
         </div>
 
-        <section className="grid">
-          <form className="panel form" onSubmit={handleCreate}>
-            <h2>Create Story</h2>
-            <label className="field">
-              <span className="label">Title</span>
-              <input
-                className="input"
-                value={title}
-                onChange={(event) => setTitle(event.target.value)}
-                placeholder="Can phong cuoi hanh lang"
-              />
-            </label>
-            <label className="field">
-              <span className="label">Initial story text</span>
-              <textarea
-                className="textarea"
-                value={storyText}
-                onChange={(event) => setStoryText(event.target.value)}
-                placeholder="Paste or write the opening draft here. You can continue editing inside the workspace."
-              />
-            </label>
-            <div className="button-row">
-              <button className="button" type="submit" disabled={isSubmitting}>
-                <FilePlus2 size={16} aria-hidden="true" />
-                Create workspace
-              </button>
-              <button
-                className="button secondary"
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={isSubmitting}
-              >
-                <FileUp size={16} aria-hidden="true" />
-                Upload markdown
-              </button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".md,text/markdown"
-                multiple
-                hidden
-                onChange={(event) => void handleUploadFiles(event)}
-              />
-            </div>
-            {message ? <p>{message}</p> : null}
-          </form>
+        <section className="layout-grid">
+          <Card>
+            <form className="grid gap-3" onSubmit={handleCreate}>
+              <CardTitle>Create Story</CardTitle>
+              <div className="grid gap-1.5">
+                <Label>Title</Label>
+                <Input
+                  value={title}
+                  onChange={(event) => setTitle(event.target.value)}
+                  placeholder="Can phong cuoi hanh lang"
+                />
+              </div>
+              <div className="grid gap-1.5">
+                <Label>Initial story text</Label>
+                <Textarea
+                  value={storyText}
+                  onChange={(event) => setStoryText(event.target.value)}
+                  placeholder="Paste or write the opening draft here. You can continue editing inside the workspace."
+                />
+              </div>
+              <div className="button-row">
+                <Button type="submit" disabled={isSubmitting}>
+                  <FilePlus2 size={16} aria-hidden="true" />
+                  Create workspace
+                </Button>
+                <Button
+                  variant="secondary"
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isSubmitting}
+                >
+                  <FileUp size={16} aria-hidden="true" />
+                  Upload markdown
+                </Button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".md,text/markdown"
+                  multiple
+                  hidden
+                  onChange={(event) => void handleUploadFiles(event)}
+                />
+              </div>
+              {message ? <p>{message}</p> : null}
+            </form>
+          </Card>
 
-          <section className="panel">
+          <Card>
             <div className="page-header">
               <div>
-                <h2>Stories</h2>
+                <CardTitle>Stories</CardTitle>
                 <p>
                   {visibleStories.length} {activeTab} local workspace
                   {visibleStories.length === 1 ? '' : 's'}
@@ -234,16 +242,17 @@ export const DashboardClient: React.FC = () => {
               </div>
               <div className="tabs">
                 {DASHBOARD_TABS.map((tab) => (
-                  <button
-                    className={activeTab === tab.id ? 'tab active' : 'tab'}
+                  <Button
+                    variant={activeTab === tab.id ? undefined : 'secondary'}
+                    size="sm"
                     key={tab.id}
                     type="button"
                     onClick={() => setActiveTab(tab.id)}
                   >
                     {tab.icon}
                     {tab.label}
-                    <span className="badge">{byTab(tab.id).length}</span>
-                  </button>
+                    <Badge>{byTab(tab.id).length}</Badge>
+                  </Button>
                 ))}
               </div>
             </div>
@@ -253,30 +262,32 @@ export const DashboardClient: React.FC = () => {
                   <Link href={`/stories/${story.id}`}>
                     <div className="status-line">
                       <strong>{story.title}</strong>
-                      <span className="badge">{story.status}</span>
+                      <Badge>{story.status}</Badge>
                     </div>
                     <span className="mono">{story.id}</span>
                     <span className="label">Updated {new Date(story.updatedAt).toLocaleString()}</span>
                   </Link>
                   <div className="button-row">
-                    <button
-                      className="button secondary small"
+                    <Button
+                      variant="secondary"
+                      size="sm"
                       type="button"
                       onClick={() => void handleToggleArchive(story)}
                     >
                       <Archive size={15} aria-hidden="true" />
                       {story.archived ? 'Unarchive' : 'Archive'}
-                    </button>
+                    </Button>
                     {story.archived ? (
-                      <button
-                        className="button danger small"
+                      <Button
+                        variant="destructive"
+                        size="sm"
                         type="button"
                         title="Xoá vĩnh viễn — chỉ dùng cho workspace test/rác"
                         onClick={() => void handleDeletePermanently(story)}
                       >
                         <Trash2 size={15} aria-hidden="true" />
                         Xoá vĩnh viễn
-                      </button>
+                      </Button>
                     ) : null}
                   </div>
                 </div>
@@ -288,7 +299,7 @@ export const DashboardClient: React.FC = () => {
                 </div>
               ) : null}
             </div>
-          </section>
+          </Card>
         </section>
       </main>
     </AppShell>

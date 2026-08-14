@@ -220,6 +220,43 @@ def load_media_library(project_root: Path) -> dict[str, dict[str, Any]]:
     return {entry["id"]: entry for entry in data.get("media", [])}
 
 
+def resolve_grade(
+    video_config: dict[str, Any], asset: dict[str, Any] | None, plan: dict[str, Any]
+) -> dict[str, Any]:
+    """Precedence: story plan override > per-asset override > global config
+    default. Only brightness/vignette are overridable — saturation always
+    comes from video_config['grade']['saturation']. Mirrored by resolveGrade
+    in src/lib/grade.ts — keep the two in sync.
+    """
+    base = video_config["grade"]
+    asset_override = (asset or {}).get("gradeOverride") or {}
+    plan_override = plan.get("gradeOverride") or {}
+
+    def pick(key: str, default: Any) -> Any:
+        for source in (plan_override, asset_override):
+            value = source.get(key)
+            if value is not None:
+                return value
+        return default
+
+    return {
+        "brightness": pick("brightness", base["brightness"]),
+        "saturation": base["saturation"],
+        "vignette": pick("vignette", base["vignette"]),
+    }
+
+
+def build_scene_grade_filter(grade: dict[str, Any]) -> str:
+    """The exact eq+vignette fragment applied to the main scene video —
+    shared by render_video.py's real render and render_grade_preview.py's
+    on-demand preview clip, so the two can never drift apart.
+    """
+    parts = [f"eq=brightness={grade['brightness']}:saturation={grade['saturation']}"]
+    if grade.get("vignette"):
+        parts.append("vignette=PI/5")
+    return ",".join(parts)
+
+
 def resolve_media_asset(project_root: Path, asset_id: str, expected_category: str) -> dict[str, Any]:
     """Resolve a media catalog id to its manifest entry, verifying category and
     file presence. Raises with a message naming the id — this is the single

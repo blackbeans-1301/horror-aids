@@ -14,12 +14,15 @@ import {
   readMediaLibrary,
   readSegments,
   readStory,
+  readStoryText,
   readVideoPlanOrDefaults,
   resolveMediaAssetFile,
   updateJob,
   withJobsLock,
   writeJobs,
+  writeTextFile,
 } from '@/lib/json-store';
+import { normalizeStoryText } from '@/lib/text-normalize';
 import type { JobRecord, JobType, MediaCategory } from '@/types/story';
 
 const workerScripts: Record<JobType, string> = {
@@ -246,6 +249,19 @@ async function launchJob(job: JobRecord): Promise<JobRecord> {
       error: `Queued job could not start: ${message}`,
     });
     return { ...job, status: 'failed', error: message };
+  }
+
+  if (job.type === 'process_story') {
+    // story.md may predate the story-text normalization step (imported or
+    // edited before it existed, or written by a path that bypassed it) —
+    // catch it here too, since this is the one place every story text
+    // reaches on its way to segmentation regardless of how it got saved.
+    const currentText = await readStoryText(job.storyId);
+    const normalized = normalizeStoryText(currentText);
+    if (normalized !== currentText) {
+      const story = await readStory(job.storyId);
+      await writeTextFile(resolveStoryPath(job.storyId, story.text.storyPath), normalized);
+    }
   }
 
   await patchStory(job.storyId, (story) => {

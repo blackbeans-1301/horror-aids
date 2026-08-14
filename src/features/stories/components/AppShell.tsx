@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { AudioLines, BookOpen, Clapperboard, Settings } from 'lucide-react';
 
+import { Button } from '@/components/ui/button';
 import { ScrollButtons } from '@/features/stories/components/ScrollButtons';
 
 interface AppShellProps {
@@ -18,18 +19,24 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
           <span>Horror Aids</span>
         </Link>
         <nav className="topnav">
-          <Link className="button secondary" href="/library">
-            <BookOpen size={15} aria-hidden="true" />
-            Thư viện truyện
-          </Link>
-          <Link className="button secondary" href="/media">
-            <Clapperboard size={15} aria-hidden="true" />
-            Media Library
-          </Link>
-          <Link className="button secondary" href="/settings">
-            <Settings size={15} aria-hidden="true" />
-            TTS Settings
-          </Link>
+          <Button asChild variant="secondary">
+            <Link href="/library">
+              <BookOpen size={15} aria-hidden="true" />
+              Thư viện truyện
+            </Link>
+          </Button>
+          <Button asChild variant="secondary">
+            <Link href="/media">
+              <Clapperboard size={15} aria-hidden="true" />
+              Media Library
+            </Link>
+          </Button>
+          <Button asChild variant="secondary">
+            <Link href="/settings">
+              <Settings size={15} aria-hidden="true" />
+              TTS Settings
+            </Link>
+          </Button>
         </nav>
       </header>
       {children}

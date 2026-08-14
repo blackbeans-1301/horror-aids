@@ -240,12 +240,24 @@ export interface AudioMediaAsset extends MediaAssetBase {
   defaultGainDb: number;
 }
 
+// Only brightness + vignette are overridable — the operator complaint is
+// specifically about excessive darkening on already-dark footage, not
+// color, so saturation stays a single global config knob
+// (config/app.json's video.grade.saturation) to keep this small.
+// null = fall through to the next precedence level (see resolveGrade in
+// src/lib/grade.ts, mirrored by resolve_grade in workers/common.py).
+export interface GradeOverride {
+  brightness: number | null;
+  vignette: boolean | null;
+}
+
 export interface VideoMediaAsset extends MediaAssetBase {
   category: 'scene_video';
   width: number | null;
   height: number | null;
   fps: number | null;
   hasAudioStream: boolean;
+  gradeOverride: GradeOverride;
 }
 
 export type MediaAsset = AudioMediaAsset | VideoMediaAsset;
@@ -271,6 +283,15 @@ export interface VideoPlanFile {
   tailOutMs: number;
   transitionMs: number;
   duckingEnabled: boolean;
+  // Per-story override, layered on top of the scene video's own
+  // gradeOverride, on top of config/app.json's video.grade default.
+  gradeOverride: GradeOverride;
+  // True once the operator hand-edits any of the three *GainDb fields via the
+  // Video tab (as opposed to the plan being freshly built from library
+  // defaults, or randomized). While true, approving final audio leaves gain
+  // alone instead of re-syncing it from the media library's current
+  // defaults — see syncVideoPlanGainToLibraryDefaults in json-store.ts.
+  gainManuallyEdited: boolean;
   updatedAt: string;
 }
 
@@ -319,8 +340,8 @@ export interface VideoRenderSummary {
 // (src/lib/openai-metadata.ts) once the final video is approved, then
 // reviewed/edited by the operator before approval. The description shown to
 // the operator is a fixed channel template (config/templates/
-// youtube-description.txt) with only contextHook/teaser filled in by AI —
-// see VIDEO_ASSEMBLY_PLAN.md-adjacent design notes for why the boilerplate
+// youtube-description.txt) with only teaser filled in by AI — see
+// VIDEO_ASSEMBLY_PLAN.md-adjacent design notes for why the boilerplate
 // (branding, disclaimers, CTA, copyright) is never AI-generated.
 export interface YoutubeMetadataFile {
   schemaVersion: number;
@@ -336,20 +357,30 @@ export interface YoutubeMetadataFile {
   } | null;
   titles: string[];
   selectedTitleIndex: number;
-  contextHook: string;
   teaser: string;
   tags: string[];
   category: string;
   thumbnailPrompts: string[];
-  pinnedComment: string;
+  pinnedComment: string[];
+  selectedPinnedCommentIndex: number;
   // Derived, not AI output: slugify(title) -> PascalCase (see
   // slugifyForHashtag in youtube-description.ts).
   storyHashtag: string;
-  // Fixed template + contextHook/teaser/storyHashtag/title filled in —
-  // what the operator actually copies into YouTube Studio.
+  // Fixed template + teaser/storyHashtag/title filled in — what the operator
+  // actually copies into YouTube Studio.
   renderedDescription: string;
   error: string | null;
 }
+
+// The independently-regenerable groups an operator can re-roll without
+// clobbering the rest of the metadata file. tags+category are grouped
+// together since they come from the same "topic" reasoning step.
+export type YoutubeMetadataFieldGroup =
+  | 'titles'
+  | 'teaser'
+  | 'tagsAndCategory'
+  | 'thumbnailPrompts'
+  | 'pinnedComment';
 
 export interface JobTypeAnalytics {
   type: JobType;

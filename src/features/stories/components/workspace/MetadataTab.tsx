@@ -1,8 +1,13 @@
-import { Check, Copy, Save, Sparkles } from 'lucide-react';
+import { Check, Copy, RefreshCw, Save, Sparkles } from 'lucide-react';
 import React from 'react';
-import { toast } from 'react-toastify';
+import { toast } from 'sonner';
 
-import type { YoutubeMetadataFile } from '@/types/story';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import type { YoutubeMetadataFieldGroup, YoutubeMetadataFile } from '@/types/story';
 
 interface MetadataTabProps {
   metadata: YoutubeMetadataFile | null;
@@ -14,6 +19,7 @@ interface MetadataTabProps {
   onUpdate: (patch: Partial<YoutubeMetadataFile>) => void;
   onSave: () => void;
   onGenerate: () => void;
+  onGenerateField: (field: YoutubeMetadataFieldGroup) => void;
   onApprove: () => void;
 }
 
@@ -31,10 +37,21 @@ async function copyToClipboard(label: string, value: string): Promise<void> {
 }
 
 const CopyButton: React.FC<{ label: string; value: string }> = ({ label, value }) => (
-  <button className="button secondary" type="button" onClick={() => void copyToClipboard(label, value)}>
+  <Button variant="secondary" size="sm" type="button" onClick={() => void copyToClipboard(label, value)}>
     <Copy size={14} aria-hidden="true" />
     Copy
-  </button>
+  </Button>
+);
+
+const RegenerateButton: React.FC<{ label: string; isBusy: boolean; onClick: () => void }> = ({
+  label,
+  isBusy,
+  onClick,
+}) => (
+  <Button variant="secondary" size="sm" type="button" onClick={onClick} disabled={isBusy}>
+    <RefreshCw size={14} aria-hidden="true" />
+    {label}
+  </Button>
 );
 
 export const MetadataTab: React.FC<MetadataTabProps> = ({
@@ -47,20 +64,21 @@ export const MetadataTab: React.FC<MetadataTabProps> = ({
   onUpdate,
   onSave,
   onGenerate,
+  onGenerateField,
   onApprove,
 }) => {
   if (!metadata) {
     return (
-      <section className="panel form">
+      <Card className="grid gap-3">
         <p className="label">Loading metadata...</p>
-      </section>
+      </Card>
     );
   }
 
   const isEmpty = metadata.status === 'pending' && metadata.titles.length === 0;
 
   return (
-    <section className="panel form">
+    <Card className="grid gap-3">
       <div className="page-header">
         <div>
           <h2>YouTube Metadata</h2>
@@ -73,10 +91,10 @@ export const MetadataTab: React.FC<MetadataTabProps> = ({
       </div>
 
       <div className="button-row">
-        <button className="button" type="button" onClick={onGenerate} disabled={!canGenerate || isBusy}>
+        <Button type="button" onClick={onGenerate} disabled={!canGenerate || isBusy}>
           <Sparkles size={16} aria-hidden="true" />
-          {metadata.status === 'pending' ? 'Generate metadata' : 'Generate lại'}
-        </button>
+          {metadata.status === 'pending' ? 'Generate metadata' : 'Generate lại tất cả'}
+        </Button>
         {!canGenerate ? (
           <span className="label">Cần duyệt verified audio trước khi generate metadata.</span>
         ) : null}
@@ -89,8 +107,15 @@ export const MetadataTab: React.FC<MetadataTabProps> = ({
         <p className="label">Chưa có metadata — bấm &quot;Generate metadata&quot; ở trên.</p>
       ) : (
         <>
-          <div className="panel">
-            <h3>Title ({metadata.titles.length} phương án)</h3>
+          <Card>
+            <div className="page-header">
+              <CardTitle>Title ({metadata.titles.length} phương án)</CardTitle>
+              <RegenerateButton
+                label="Regenerate title"
+                isBusy={isBusy}
+                onClick={() => onGenerateField('titles')}
+              />
+            </div>
             {metadata.titles.map((title, index) => (
               <label className="field row" key={index}>
                 <input
@@ -100,8 +125,7 @@ export const MetadataTab: React.FC<MetadataTabProps> = ({
                   onChange={() => onUpdate({ selectedTitleIndex: index })}
                   disabled={isBusy}
                 />
-                <input
-                  className="input"
+                <Input
                   type="text"
                   value={title}
                   maxLength={100}
@@ -115,24 +139,20 @@ export const MetadataTab: React.FC<MetadataTabProps> = ({
                 <CopyButton label={`title #${index + 1}`} value={title} />
               </label>
             ))}
-          </div>
+          </Card>
 
-          <div className="panel">
-            <h3>Description</h3>
-            <label className="field">
-              <span className="label">Context hook (câu tiếp nối intro 666Hz Radio)</span>
-              <textarea
-                className="textarea"
-                rows={2}
-                value={metadata.contextHook}
-                onChange={(event) => onUpdate({ contextHook: event.target.value })}
-                disabled={isBusy}
+          <Card>
+            <div className="page-header">
+              <CardTitle>Description</CardTitle>
+              <RegenerateButton
+                label="Regenerate teaser"
+                isBusy={isBusy}
+                onClick={() => onGenerateField('teaser')}
               />
-            </label>
+            </div>
             <label className="field">
               <span className="label">Teaser (không spoil kết truyện)</span>
-              <textarea
-                className="textarea"
+              <Textarea
                 rows={8}
                 value={metadata.teaser}
                 onChange={(event) => onUpdate({ teaser: event.target.value })}
@@ -141,19 +161,25 @@ export const MetadataTab: React.FC<MetadataTabProps> = ({
             </label>
             <label className="field">
               <span className="label">Description đầy đủ (đã ghép template — copy cái này khi đăng)</span>
-              <textarea className="textarea" rows={14} value={metadata.renderedDescription} readOnly />
+              <Textarea rows={14} value={metadata.renderedDescription} readOnly />
             </label>
             <div className="button-row">
               <CopyButton label="description" value={metadata.renderedDescription} />
             </div>
-          </div>
+          </Card>
 
-          <div className="panel">
-            <h3>Tags &amp; Category</h3>
+          <Card>
+            <div className="page-header">
+              <CardTitle>Tags &amp; Category</CardTitle>
+              <RegenerateButton
+                label="Regenerate tags & category"
+                isBusy={isBusy}
+                onClick={() => onGenerateField('tagsAndCategory')}
+              />
+            </div>
             <label className="field">
               <span className="label">Tags (phân cách bởi dấu phẩy)</span>
-              <textarea
-                className="textarea"
+              <Textarea
                 rows={3}
                 value={metadata.tags.join(', ')}
                 onChange={(event) =>
@@ -172,23 +198,28 @@ export const MetadataTab: React.FC<MetadataTabProps> = ({
             </div>
             <label className="field">
               <span className="label">Category</span>
-              <input
-                className="input"
+              <Input
                 type="text"
                 value={metadata.category}
                 onChange={(event) => onUpdate({ category: event.target.value })}
                 disabled={isBusy}
               />
             </label>
-          </div>
+          </Card>
 
-          <div className="panel">
-            <h3>Thumbnail image-gen prompts</h3>
+          <Card>
+            <div className="page-header">
+              <CardTitle>Thumbnail image-gen prompts</CardTitle>
+              <RegenerateButton
+                label="Regenerate thumbnail prompts"
+                isBusy={isBusy}
+                onClick={() => onGenerateField('thumbnailPrompts')}
+              />
+            </div>
             {metadata.thumbnailPrompts.map((prompt, index) => (
               <label className="field" key={index}>
                 <span className="label">Prompt #{index + 1} (tiếng Anh, dán vào Midjourney/DALL-E/etc.)</span>
-                <textarea
-                  className="textarea"
+                <Textarea
                   rows={4}
                   value={prompt}
                   onChange={(event) => {
@@ -203,36 +234,55 @@ export const MetadataTab: React.FC<MetadataTabProps> = ({
                 </div>
               </label>
             ))}
-          </div>
+          </Card>
 
-          <div className="panel">
-            <h3>Pinned comment</h3>
-            <textarea
-              className="textarea"
-              rows={3}
-              value={metadata.pinnedComment}
-              onChange={(event) => onUpdate({ pinnedComment: event.target.value })}
-              disabled={isBusy}
-            />
-            <div className="button-row">
-              <CopyButton label="pinned comment" value={metadata.pinnedComment} />
+          <Card>
+            <div className="page-header">
+              <CardTitle>Pinned comment ({metadata.pinnedComment.length} phương án)</CardTitle>
+              <RegenerateButton
+                label="Regenerate pinned comment"
+                isBusy={isBusy}
+                onClick={() => onGenerateField('pinnedComment')}
+              />
             </div>
-          </div>
+            {metadata.pinnedComment.map((comment, index) => (
+              <label className="field row" key={index}>
+                <input
+                  type="radio"
+                  name="metadata-pinned-comment"
+                  checked={metadata.selectedPinnedCommentIndex === index}
+                  onChange={() => onUpdate({ selectedPinnedCommentIndex: index })}
+                  disabled={isBusy}
+                />
+                <Textarea
+                  rows={2}
+                  value={comment}
+                  onChange={(event) => {
+                    const next = [...metadata.pinnedComment];
+                    next[index] = event.target.value;
+                    onUpdate({ pinnedComment: next });
+                  }}
+                  disabled={isBusy}
+                />
+                <CopyButton label={`pinned comment #${index + 1}`} value={comment} />
+              </label>
+            ))}
+          </Card>
 
           <div className="button-row">
-            <button className="button secondary" type="button" onClick={onSave} disabled={isBusy || !isDirty}>
+            <Button variant="secondary" type="button" onClick={onSave} disabled={isBusy || !isDirty}>
               <Save size={16} aria-hidden="true" />
               Save
-            </button>
-            <button className="button" type="button" onClick={onApprove} disabled={!canApprove || isBusy}>
+            </Button>
+            <Button type="button" onClick={onApprove} disabled={!canApprove || isBusy}>
               <Check size={16} aria-hidden="true" />
               Approve metadata
-            </button>
-            {metadataApprovalStatus === 'approved' ? <span className="badge good">Approved</span> : null}
+            </Button>
+            {metadataApprovalStatus === 'approved' ? <Badge variant="good">Approved</Badge> : null}
           </div>
         </>
       )}
-    </section>
+    </Card>
   );
 };
 

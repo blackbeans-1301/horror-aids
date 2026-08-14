@@ -3,9 +3,17 @@
 import Link from 'next/link';
 import { Mic, Play, RefreshCw, Trash2, Upload } from 'lucide-react';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { toast } from 'react-toastify';
+import { toast } from 'sonner';
 
 import { useConfirm } from '@/components/ConfirmDialog';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { storiesApi, type VoiceOption } from '@/features/stories/api/storiesApi';
 import { AppShell } from '@/features/stories/components/AppShell';
 
@@ -267,9 +275,9 @@ export const SettingsClient: React.FC = () => {
             <p>The voice engine behind every story in this studio.</p>
           </div>
           <div className="button-row">
-            <Link className="button secondary" href="/">
-              Back
-            </Link>
+            <Button asChild variant="secondary">
+              <Link href="/">Back</Link>
+            </Button>
           </div>
         </div>
 
@@ -282,7 +290,7 @@ export const SettingsClient: React.FC = () => {
         {message ? <p className="status-banner">{message}</p> : null}
 
         <section className="settings-grid">
-          <div className="panel">
+          <Card>
             <div className="eyebrow">Engine</div>
             <h2>Model</h2>
             {config ? (
@@ -291,44 +299,49 @@ export const SettingsClient: React.FC = () => {
                   <strong>{config.modelRepo}</strong>
                 </p>
                 <div className="status-line">
-                  <span className="badge good">{config.device}</span>
-                  <span className="badge">{config.sampleRate / 1000} kHz</span>
+                  <Badge variant="good">{config.device}</Badge>
+                  <Badge>{config.sampleRate / 1000} kHz</Badge>
                 </div>
-                <p className="label">{config.notes}</p>
+                <p>{config.notes}</p>
                 {config.emotions.length > 0 ? (
-                  <p className="label">
+                  <p>
                     Emotions: {config.emotions.join(', ')} · Inline cues: {config.inlineCues.join(' ')}
                   </p>
                 ) : (
-                  <p className="label">This model has no emotion controls.</p>
+                  <p>This model has no emotion controls.</p>
                 )}
-                <label className="field">
-                  <span className="label">Model</span>
-                  <select
-                    className="select"
+                <div className="grid gap-1.5">
+                  <Label>Model</Label>
+                  <Select
                     value={selectedModel}
-                    onChange={(event) => setSelectedModel(event.target.value)}
+                    onValueChange={setSelectedModel}
                     disabled={isBusy}
                   >
-                    {config.models.map((model) => (
-                      <option key={model.id} value={model.id}>
-                        {model.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                    <SelectTrigger disabled={isBusy}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {config.models.map((model) => (
+                        <SelectItem key={model.id} value={model.id}>
+                          {model.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
                 {!config.models.find((model) => model.id === selectedModel)?.supportsDevice ? (
                   <>
-                    <p className="label">
+                    <p>
                       This model picks its own backend (Metal on macOS) — there is no device to
                       choose.
                     </p>
-                    <label className="field">
-                      <span className="label">
+                    <div className="grid gap-1.5">
+                      <Label>
                         MaskGIT steps: {selectedGgufSteps} (default {config.ggufStepsRange.default})
-                      </span>
+                      </Label>
                       <input
                         type="range"
+                        className="accent-primary"
                         min={config.ggufStepsRange.min}
                         max={config.ggufStepsRange.max}
                         step={1}
@@ -336,172 +349,169 @@ export const SettingsClient: React.FC = () => {
                         onChange={(event) => setSelectedGgufSteps(Number(event.target.value))}
                         disabled={isBusy}
                       />
-                      <span className="label">
+                      <p>
                         Fewer steps generate faster but decode is coarser — generation time
                         scales roughly linearly with this (32→16 steps is about 2x faster).
                         Duration/pacing is unaffected either way. Listen to a preview after
                         lowering it before using it on a real story.
-                      </span>
-                    </label>
+                      </p>
+                    </div>
                   </>
                 ) : selectedModel === config.model ? (
-                  <label className="field">
-                    <span className="label">Compute device</span>
-                    <select
-                      className="select"
+                  <div className="grid gap-1.5">
+                    <Label>Compute device</Label>
+                    <Select
                       value={selectedDevice}
-                      onChange={(event) => setSelectedDevice(event.target.value)}
+                      onValueChange={setSelectedDevice}
                       disabled={isBusy}
                     >
-                      {config.devices.map((device) => (
-                        <option key={device.id} value={device.id}>
-                          {device.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                      <SelectTrigger disabled={isBusy}>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {config.devices.map((device) => (
+                          <SelectItem key={device.id} value={device.id}>
+                            {device.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                 ) : (
-                  <p className="label">
+                  <p>
                     Switching models loads the new model on its default device; you can adjust the
                     device afterwards.
                   </p>
                 )}
-                <button
-                  className="button"
+                <Button
                   type="button"
                   onClick={() => void applyModelSettings()}
                   disabled={isBusy || !hasModelPendingChanges}
                 >
                   <RefreshCw size={16} aria-hidden="true" />
                   Apply
-                </button>
+                </Button>
               </>
             ) : (
               <p className="label">{configError || 'Loading...'}</p>
             )}
-          </div>
+          </Card>
 
-          <div className="panel form">
+          <Card className="grid gap-3">
             <div className="eyebrow">Quality Control</div>
             <h2>Audio Verification</h2>
             {config ? (
               <>
-                <p className="label">
+                <p>
                   After each segment is generated, Whisper transcribes it and checks it against the
                   script — this is the slowest part of a generation run (a Whisper model load plus a
                   transcription pass per batch). Turn it off to accept generated audio immediately and
                   review it by ear instead.
                 </p>
-                <label className="field row">
-                  <input
-                    type="checkbox"
+                <label className="flex items-center gap-2">
+                  <Checkbox
                     checked={selectedVerificationEnabled}
-                    onChange={(event) => setSelectedVerificationEnabled(event.target.checked)}
+                    onCheckedChange={(checked) => setSelectedVerificationEnabled(checked === true)}
                     disabled={isBusy}
                   />
                   <span className="label">Verify generated audio with Whisper</span>
                 </label>
-                <button
-                  className="button"
+                <Button
                   type="button"
                   onClick={() => void applyVerificationSetting()}
                   disabled={isBusy || !hasVerificationPendingChanges}
                 >
                   <RefreshCw size={16} aria-hidden="true" />
                   Apply
-                </button>
+                </Button>
               </>
             ) : (
               <p className="label">{configError || 'Loading...'}</p>
             )}
-          </div>
+          </Card>
 
-          <div className="panel form">
+          <Card className="grid gap-3">
             <div className="eyebrow">Story Processing</div>
             <h2>Character Segmentation</h2>
             {config ? (
               <>
-                <p className="label">
+                <p>
                   When &ldquo;Process story&rdquo; splits your text, it looks for &ldquo;Name:
                   dialogue&rdquo; lines and gives each character its own segment and voice. Turn
                   this off to keep everything as a single narrator — useful if you only ever
                   generate narrator-only audio.
                 </p>
-                <label className="field row">
-                  <input
-                    type="checkbox"
+                <label className="flex items-center gap-2">
+                  <Checkbox
                     checked={selectedCharacterSegmentationEnabled}
-                    onChange={(event) => setSelectedCharacterSegmentationEnabled(event.target.checked)}
+                    onCheckedChange={(checked) => setSelectedCharacterSegmentationEnabled(checked === true)}
                     disabled={isBusy}
                   />
                   <span className="label">Split dialogue into character segments</span>
                 </label>
-                <button
-                  className="button"
+                <Button
                   type="button"
                   onClick={() => void applySegmentationSetting()}
                   disabled={isBusy || !hasSegmentationPendingChanges}
                 >
                   <RefreshCw size={16} aria-hidden="true" />
                   Apply
-                </button>
+                </Button>
               </>
             ) : (
               <p className="label">{configError || 'Loading...'}</p>
             )}
-          </div>
+          </Card>
 
-          <div className="panel form">
+          <Card className="grid gap-3">
             <div className="eyebrow">Voice Library</div>
             <h2>Add Cloned Voice</h2>
-            <p className="label">
+            <p>
               Upload a clean 3-5 second WAV of the voice you want to clone. It becomes available
               instantly in the Characters tab.
             </p>
-            <label className="field">
-              <span className="label">Voice name</span>
-              <input
-                className="input"
+            <div className="grid gap-1.5">
+              <Label>Voice name</Label>
+              <Input
                 value={voiceName}
                 onChange={(event) => setVoiceName(event.target.value)}
                 placeholder="ong-noi-ke-chuyen"
               />
-            </label>
-            <label className="field">
-              <span className="label">Reference WAV (3-5s)</span>
-              <input className="input" type="file" accept=".wav,audio/wav" ref={fileInputRef} />
-            </label>
-            <button className="button" type="button" onClick={() => void uploadVoice()} disabled={isBusy}>
+            </div>
+            <div className="grid gap-1.5">
+              <Label>Reference WAV (3-5s)</Label>
+              <Input type="file" accept=".wav,audio/wav" ref={fileInputRef} />
+            </div>
+            <Button type="button" onClick={() => void uploadVoice()} disabled={isBusy}>
               <Upload size={16} aria-hidden="true" />
               Upload and encode
-            </button>
-          </div>
+            </Button>
+          </Card>
         </section>
 
-        <section className="panel">
+        <Card>
           <h2>Voices ({voices.length})</h2>
-          <div className="table-wrap">
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Voice</th>
-                <th>Type</th>
-                <th>Description</th>
-                <th>Preview</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Voice</TableHead>
+                <TableHead>Type</TableHead>
+                <TableHead>Description</TableHead>
+                <TableHead>Preview</TableHead>
+                <TableHead />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {voices.map((voice) => (
-                <tr key={voice.id}>
-                  <td className="mono">
+                <TableRow key={voice.id}>
+                  <TableCell className="mono">
                     {voice.kind === 'clone' ? <Mic size={14} aria-hidden="true" /> : null} {voice.id}
-                  </td>
-                  <td>
-                    <span className={voice.kind === 'clone' ? 'badge good' : 'badge'}>{voice.kind}</span>
-                  </td>
-                  <td>{voice.description}</td>
-                  <td>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={voice.kind === 'clone' ? 'good' : 'default'}>{voice.kind}</Badge>
+                  </TableCell>
+                  <TableCell>{voice.description}</TableCell>
+                  <TableCell>
                     {previewVoiceId === voice.id ? (
                       <audio
                         autoPlay
@@ -519,8 +529,8 @@ export const SettingsClient: React.FC = () => {
                         }}
                       />
                     ) : (
-                      <button
-                        className="button secondary"
+                      <Button
+                        variant="secondary"
                         type="button"
                         title="Synthesize a short horror sample with this voice"
                         disabled={previewLoading}
@@ -531,27 +541,26 @@ export const SettingsClient: React.FC = () => {
                       >
                         <Play size={15} aria-hidden="true" />
                         {previewLoading ? 'Loading...' : 'Test'}
-                      </button>
+                      </Button>
                     )}
-                  </td>
-                  <td>
+                  </TableCell>
+                  <TableCell>
                     {voice.kind === 'clone' ? (
-                      <button
-                        className="button danger"
+                      <Button
+                        variant="destructive"
                         type="button"
                         disabled={isBusy}
                         onClick={() => void confirmDeleteVoice(voice.id)}
                       >
                         <Trash2 size={15} aria-hidden="true" />
-                      </button>
+                      </Button>
                     ) : null}
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
-          </div>
-        </section>
+            </TableBody>
+          </Table>
+        </Card>
       </main>
     </AppShell>
   );

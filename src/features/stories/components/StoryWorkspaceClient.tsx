@@ -15,6 +15,9 @@ import {
 import React from 'react';
 
 import { useConfirm } from '@/components/ConfirmDialog';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
 import { AppShell } from '@/features/stories/components/AppShell';
 import { ActiveJobBanner } from '@/features/stories/components/workspace/ActiveJobBanner';
 import { AnalyticsTab } from '@/features/stories/components/workspace/AnalyticsTab';
@@ -101,6 +104,7 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
     updateVideoPlan,
     saveVideoPlan,
     randomizeVideoPlan,
+    resetVideoPlanGain,
     uploadIntroImage,
     deleteIntroImage,
     approveFinalVideo,
@@ -213,24 +217,26 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
             <div className="eyebrow">Story Workspace</div>
             <h1>{detail?.story.title ?? slug}</h1>
             <p className="status-line">
-              <span className="badge">{detail?.story.status ?? 'loading'}</span>
-              <span className="badge">segments {segmentApproval}</span>
-              <span className={allVerified ? 'badge good' : 'badge warn'}>
-                verified {allVerified ? 'passed' : 'pending'}
-              </span>
-              <span className="badge">final audio {detail?.story.approvals.finalAudio.status ?? 'pending'}</span>
-              <span className="badge">final video {detail?.story.approvals.finalVideo.status ?? 'pending'}</span>
-              <span className="badge">metadata {detail?.story.approvals.metadata.status ?? 'pending'}</span>
+              <Badge>{detail?.story.status ?? 'loading'}</Badge>
+              <Badge>segments {segmentApproval}</Badge>
+              <Badge variant={allVerified ? 'good' : 'warn'}>verified {allVerified ? 'passed' : 'pending'}</Badge>
+              <Badge>final audio {detail?.story.approvals.finalAudio.status ?? 'pending'}</Badge>
+              <Badge>final video {detail?.story.approvals.finalVideo.status ?? 'pending'}</Badge>
+              <Badge>metadata {detail?.story.approvals.metadata.status ?? 'pending'}</Badge>
             </p>
           </div>
           <div className="button-row">
-            <Link className="button secondary" href="/">
-              Back
-            </Link>
+            <Button asChild variant="secondary">
+              <Link href="/">Back</Link>
+            </Button>
           </div>
         </div>
 
-        {loadError ? <p className="panel">{loadError}</p> : null}
+        {loadError ? (
+          <Card>
+            <p>{loadError}</p>
+          </Card>
+        ) : null}
 
         {isArchived ? (
           <p className="status-banner">
@@ -250,15 +256,16 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
 
         <div className="tabs">
           {tabs.map((tab) => (
-            <button
-              className={activeTab === tab.id ? 'tab active' : 'tab'}
+            <Button
+              variant={activeTab === tab.id ? undefined : 'secondary'}
+              size="sm"
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
               type="button"
             >
               {tab.icon}
               {tab.label}
-            </button>
+            </Button>
           ))}
         </div>
 
@@ -368,6 +375,7 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
             onUpdatePlan={updateVideoPlan}
             onSavePlan={() => void saveVideoPlan()}
             onRandomize={() => void randomizeVideoPlan()}
+            onResetGain={() => void resetVideoPlanGain()}
             onUploadIntroImage={(file) => void uploadIntroImage(file)}
             onDeleteIntroImage={() => void deleteIntroImage()}
             onStartRender={() => void handleStartJob('render_video')}
@@ -389,6 +397,7 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
             onUpdate={updateYoutubeMetadata}
             onSave={() => void saveYoutubeMetadata()}
             onGenerate={() => void generateYoutubeMetadata()}
+            onGenerateField={(field) => void generateYoutubeMetadata([field])}
             onApprove={() => void approveYoutubeMetadata()}
           />
         ) : null}

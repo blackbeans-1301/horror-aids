@@ -14,9 +14,12 @@ import {
   Undo2,
 } from 'lucide-react';
 import React, { useCallback, useEffect, useState } from 'react';
-import { toast } from 'react-toastify';
+import { toast } from 'sonner';
 
 import { useConfirm } from '@/components/ConfirmDialog';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
 import { libraryApi } from '@/features/library/api/libraryApi';
 import { storiesApi } from '@/features/stories/api/storiesApi';
 import { AppShell } from '@/features/stories/components/AppShell';
@@ -74,7 +77,7 @@ function LibrarySection({
   renderActions: (entry: ContentStoryEntry) => React.ReactNode;
 }): React.ReactElement {
   return (
-    <section className="panel">
+    <Card>
       <p>{description}</p>
       <div className="story-list">
         {entries.map((entry) => (
@@ -82,7 +85,7 @@ function LibrarySection({
             <Link href={`/library/${entry.id}`}>
               <div className="status-line">
                 <strong>{entry.title}</strong>
-                <span className="badge">{entry.chapterCount} chương</span>
+                <Badge>{entry.chapterCount} chương</Badge>
               </div>
               <span className="mono">{entry.id}</span>
               {entry.linkedStorySlug ? (
@@ -102,7 +105,7 @@ function LibrarySection({
           </div>
         ) : null}
       </div>
-    </section>
+    </Card>
   );
 }
 
@@ -245,15 +248,15 @@ export const LibraryClient: React.FC = () => {
             <p>Theo dõi truyện từ bản thảo đến khi đã generate xong, rồi đưa sang workspace TTS.</p>
           </div>
           <div className="header-actions">
-            <button
-              className="button secondary"
+            <Button
+              variant="secondary"
               type="button"
               onClick={() => void handlePull()}
               disabled={isPulling}
             >
               <CloudDownload size={16} aria-hidden="true" />
               {isPulling ? 'Đang pull...' : 'Pull mới nhất'}
-            </button>
+            </Button>
             <span className="label">
               Nguồn: <span className="mono">content/horror-stories</span>
             </span>
@@ -269,16 +272,17 @@ export const LibraryClient: React.FC = () => {
 
         <div className="tabs">
           {TABS.map((tab) => (
-            <button
-              className={activeTab === tab.id ? 'tab active' : 'tab'}
+            <Button
+              variant={activeTab === tab.id ? undefined : 'secondary'}
+              size="sm"
               key={tab.id}
               type="button"
               onClick={() => setActiveTab(tab.id)}
             >
               {tab.icon}
               {tab.label}
-              <span className="badge">{byStatus(tab.id).length}</span>
-            </button>
+              <Badge>{byStatus(tab.id).length}</Badge>
+            </Button>
           ))}
         </div>
 
@@ -288,15 +292,15 @@ export const LibraryClient: React.FC = () => {
             entries={activeEntries}
             emptyLabel={activeTabDef.emptyLabel}
             renderActions={(entry) => (
-              <button
-                className="button small"
+              <Button
+                size="sm"
                 type="button"
                 disabled={busyId === entry.id}
                 onClick={() => void handleSetStatus(entry, 'approved')}
               >
                 <BookCheck size={15} aria-hidden="true" />
                 Duyệt
-              </button>
+              </Button>
             )}
           />
         ) : null}
@@ -308,24 +312,25 @@ export const LibraryClient: React.FC = () => {
             emptyLabel={activeTabDef.emptyLabel}
             renderActions={(entry) => (
               <>
-                <button
-                  className="button small"
+                <Button
+                  size="sm"
                   type="button"
                   disabled={busyId === entry.id}
                   onClick={() => void handleImport(entry)}
                 >
                   <FileInput size={15} aria-hidden="true" />
                   Nhập vào xử lý
-                </button>
-                <button
-                  className="button secondary small"
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
                   type="button"
                   disabled={busyId === entry.id}
                   onClick={() => void handleSetStatus(entry, 'draft')}
                 >
                   <Undo2 size={15} aria-hidden="true" />
                   Trả về Draft
-                </button>
+                </Button>
               </>
             )}
           />
@@ -339,12 +344,15 @@ export const LibraryClient: React.FC = () => {
             renderActions={(entry) =>
               entry.linkedStorySlug ? (
                 <>
-                  <Link className="button small" href={`/stories/${entry.linkedStorySlug}`}>
-                    <ArrowUpRight size={15} aria-hidden="true" />
-                    Mở workspace
-                  </Link>
-                  <button
-                    className="button secondary small"
+                  <Button asChild size="sm">
+                    <Link href={`/stories/${entry.linkedStorySlug}`}>
+                      <ArrowUpRight size={15} aria-hidden="true" />
+                      Mở workspace
+                    </Link>
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
                     type="button"
                     disabled={busyId === entry.id}
                     title="Nội dung chương đã sửa sau khi nhập? Đồng bộ lại vào workspace."
@@ -352,7 +360,7 @@ export const LibraryClient: React.FC = () => {
                   >
                     <RefreshCcw size={15} aria-hidden="true" />
                     Nhập lại
-                  </button>
+                  </Button>
                 </>
               ) : null
             }
@@ -367,20 +375,23 @@ export const LibraryClient: React.FC = () => {
             renderActions={(entry) => (
               <>
                 {entry.linkedStorySlug ? (
-                  <Link className="button small" href={`/stories/${entry.linkedStorySlug}`}>
-                    <ArrowUpRight size={15} aria-hidden="true" />
-                    Mở workspace
-                  </Link>
+                  <Button asChild size="sm">
+                    <Link href={`/stories/${entry.linkedStorySlug}`}>
+                      <ArrowUpRight size={15} aria-hidden="true" />
+                      Mở workspace
+                    </Link>
+                  </Button>
                 ) : null}
-                <button
-                  className="button secondary small"
+                <Button
+                  variant="secondary"
+                  size="sm"
                   type="button"
                   disabled={busyId === entry.id || !entry.linkedStorySlug}
                   onClick={() => void handleUnarchiveWorkspace(entry)}
                 >
                   <Archive size={15} aria-hidden="true" />
                   Bỏ lưu trữ
-                </button>
+                </Button>
               </>
             )}
           />

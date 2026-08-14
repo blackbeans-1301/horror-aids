@@ -1,6 +1,8 @@
 import { ListMusic, SkipBack, SkipForward, Square } from 'lucide-react';
 import React from 'react';
 
+import { Button } from '@/components/ui/button';
+import { Card, CardTitle } from '@/components/ui/card';
 import { assetUrl } from '@/features/stories/utils/asset';
 import type { SegmentRecord } from '@/types/story';
 
@@ -22,28 +24,28 @@ export const StoryPlayer: React.FC<StoryPlayerProps> = ({
   onSegmentEnded,
 }) => {
   return (
-    <div className="panel">
-      <h3>Story Player</h3>
+    <Card>
+      <CardTitle>Story Player</CardTitle>
       {playableSegments.length === 0 ? (
         <p className="label">No segment audio yet. Generate TTS first.</p>
       ) : (
         <>
           <div className="button-row">
-            <button className="button" type="button" onClick={() => setPlayerIndex(0)} disabled={playerIndex !== null}>
+            <Button type="button" onClick={() => setPlayerIndex(0)} disabled={playerIndex !== null}>
               <ListMusic size={16} aria-hidden="true" />
               Play all ({playableSegments.length} segments)
-            </button>
-            <button
-              className="button secondary"
+            </Button>
+            <Button
+              variant="secondary"
               type="button"
               onClick={() => setPlayerIndex((current) => (current !== null && current > 0 ? current - 1 : current))}
               disabled={playerIndex === null || playerIndex === 0}
             >
               <SkipBack size={16} aria-hidden="true" />
               Previous
-            </button>
-            <button
-              className="button secondary"
+            </Button>
+            <Button
+              variant="secondary"
               type="button"
               onClick={() =>
                 setPlayerIndex((current) =>
@@ -54,16 +56,11 @@ export const StoryPlayer: React.FC<StoryPlayerProps> = ({
             >
               <SkipForward size={16} aria-hidden="true" />
               Next
-            </button>
-            <button
-              className="button secondary"
-              type="button"
-              onClick={() => setPlayerIndex(null)}
-              disabled={playerIndex === null}
-            >
+            </Button>
+            <Button variant="secondary" type="button" onClick={() => setPlayerIndex(null)} disabled={playerIndex === null}>
               <Square size={16} aria-hidden="true" />
               Stop
-            </button>
+            </Button>
           </div>
           {playingSegment ? (
             <>
@@ -86,7 +83,7 @@ export const StoryPlayer: React.FC<StoryPlayerProps> = ({
           )}
         </>
       )}
-    </div>
+    </Card>
   );
 };
 

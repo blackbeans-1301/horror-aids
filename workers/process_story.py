@@ -39,6 +39,129 @@ def role_for_index(name: str, index: int) -> str:
     return "side_character"
 
 
+# Fields that represent generation/review progress rather than script
+# structure — these are what a segment "keeps" when reconciled against the
+# previous run instead of being reset to build_segment()'s fresh defaults.
+# audioPath/whisperTranscriptPath are included deliberately: a carried-over
+# segment's real files stay wherever they were already generated, even if
+# its id/order (recomputed fresh below) shifted — nothing recomputes those
+# paths from id to double-check they still match, so this is safe. See
+# workers/generate_verify_tts.py and concat_audio.py, which only ever read
+# segment["audioPath"]/segment["whisperTranscriptPath"] directly.
+_PROGRESS_FIELDS = (
+    "status",
+    "verification",
+    "audioPath",
+    "whisperTranscriptPath",
+    "audioTake",
+    "audioCreatedAt",
+    "previousTake",
+    "flagged",
+)
+
+# dp table cells (len(previous) * len(fresh)) above which the LCS alignment
+# below is skipped in favor of the coarser same-length-only match — this
+# pipeline was never sized for multi-thousand-segment stories, and an
+# unbounded O(n*m) table would burn unreasonable time/memory if one ever
+# showed up.
+_MAX_ALIGNMENT_CELLS = 4_000_000
+
+
+def _segment_key(segment: dict[str, Any]) -> tuple[Any, Any, Any]:
+    return (segment.get("text"), segment.get("speakerId"), segment.get("emotion"))
+
+
+def _lcs_align(previous_keys: list[Any], fresh_keys: list[Any]) -> list[tuple[int, int]]:
+    """Longest-common-subsequence alignment between two key sequences — the
+    same algorithm behind `diff`/`git diff`. Returns (previous_index,
+    fresh_index) pairs, in order, for positions that carry an identical key.
+
+    This is what lets a segment "move" (something was inserted or removed
+    elsewhere in the story) and still be recognized as unchanged, while
+    guaranteeing two segments never get cross-matched out of order — the
+    alignment is monotonic in both indices by construction, so segment 12's
+    old audio can never land on an unrelated segment 40 just because they
+    happen to share text.
+    """
+    n, m = len(previous_keys), len(fresh_keys)
+    dp = [[0] * (m + 1) for _ in range(n + 1)]
+    for i in range(n - 1, -1, -1):
+        row = dp[i]
+        next_row = dp[i + 1]
+        key_i = previous_keys[i]
+        for j in range(m - 1, -1, -1):
+            if key_i == fresh_keys[j]:
+                row[j] = next_row[j + 1] + 1
+            else:
+                row[j] = next_row[j] if next_row[j] >= row[j + 1] else row[j + 1]
+
+    pairs = []
+    i = j = 0
+    while i < n and j < m:
+        if previous_keys[i] == fresh_keys[j]:
+            pairs.append((i, j))
+            i += 1
+            j += 1
+        elif dp[i + 1][j] >= dp[i][j + 1]:
+            i += 1
+        else:
+            j += 1
+    return pairs
+
+
+def _merge_progress(old: dict[str, Any], new: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(new)
+    for field in _PROGRESS_FIELDS:
+        if field in old:
+            merged[field] = old[field]
+    return merged
+
+
+def _reconcile_by_position(
+    previous: list[dict[str, Any]], fresh: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    if len(previous) != len(fresh):
+        return fresh
+    return [
+        _merge_progress(old, new) if _segment_key(old) == _segment_key(new) else new
+        for old, new in zip(previous, fresh)
+    ]
+
+
+def reconcile_segments(
+    previous: list[dict[str, Any]], fresh: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Carry audio/review progress forward from the previous segments.json
+    onto the freshly-segmented text, matching by content instead of by
+    position — so inserting or deleting a paragraph elsewhere in the story
+    no longer resets every segment after the change point.
+
+    A segment only keeps its old audio if its (text, speakerId, emotion)
+    is byte-for-byte identical to some segment from the previous run, and
+    the pairing comes from an LCS alignment (see _lcs_align) so matches
+    can't cross out of order. Anything left unmatched — new lines, or
+    lines whose text/speaker/emotion changed — gets build_segment()'s
+    fresh pending state, same as before.
+    """
+    if not previous:
+        return fresh
+
+    if len(previous) * len(fresh) > _MAX_ALIGNMENT_CELLS:
+        return _reconcile_by_position(previous, fresh)
+
+    previous_keys = [_segment_key(segment) for segment in previous]
+    fresh_keys = [_segment_key(segment) for segment in fresh]
+    carry_from = {
+        fresh_index: prev_index
+        for prev_index, fresh_index in _lcs_align(previous_keys, fresh_keys)
+    }
+
+    return [
+        _merge_progress(previous[carry_from[index]], new) if index in carry_from else new
+        for index, new in enumerate(fresh)
+    ]
+
+
 def build_segment(segment_id: int, speaker_id: str, text: str) -> dict[str, Any]:
     padded = f"{segment_id:04d}"
     return {
@@ -136,6 +259,11 @@ def main() -> int:
     if not segments:
         segments.append(build_segment(1, "narrator", story_text))
 
+    previous_segments = ctx.read_json(story["text"]["segmentsPath"], {"segments": []}).get(
+        "segments", []
+    )
+    segments = reconcile_segments(previous_segments, segments)
+
     ctx.write_json(story["text"]["charactersPath"], {"characters": list(characters.values())})
     ctx.write_json(story["text"]["segmentsPath"], {"segments": segments})
     story["status"] = "segments_review"
@@ -144,8 +272,17 @@ def main() -> int:
     story["approvals"]["finalAudio"] = {"status": "pending", "approvedAt": None}
     story["audio"]["status"] = "pending"
     ctx.write_story(story)
-    ctx.result("complete", segments=len(segments), characters=len(characters))
-    ctx.log(f"process_story complete: {len(segments)} segments, {len(characters)} characters")
+    kept_audio = sum(1 for segment in segments if segment.get("status") != "pending")
+    ctx.result(
+        "complete",
+        segments=len(segments),
+        characters=len(characters),
+        audioKept=kept_audio,
+    )
+    ctx.log(
+        f"process_story complete: {len(segments)} segments, {len(characters)} characters, "
+        f"{kept_audio} kept existing audio"
+    )
     return 0
 
 

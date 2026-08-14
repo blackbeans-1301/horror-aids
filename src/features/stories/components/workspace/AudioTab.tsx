@@ -1,6 +1,11 @@
 import { AudioLines, Check, Download, Flag, FolderOpen, History, Play, RefreshCw } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
 
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Card, CardTitle } from '@/components/ui/card';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { StoryPlayer } from '@/features/stories/components/workspace/StoryPlayer';
 import { assetUrl, segmentAudioPath } from '@/features/stories/utils/asset';
 import { formatClockDuration } from '@/features/stories/utils/format';
@@ -126,68 +131,70 @@ export const AudioTab: React.FC<AudioTabProps> = ({
   const visibleSegments = showFlaggedOnly ? segments.filter((segment) => segment.flagged) : segments;
 
   return (
-    <section className="panel form">
+    <Card className="grid gap-3">
       <div className="page-header">
         <div>
           <h2>Audio Verification</h2>
           <p>Generate TTS, confirm verified output, then concat.</p>
         </div>
       </div>
-      <div className="panel">
-        <h3>Final M4A</h3>
+      <Card>
+        <CardTitle>Final M4A</CardTitle>
         {finalAudioExists ? (
           <>
             <audio controls src={assetUrl(slug, finalAudioPath)} />
             <div className="button-row">
-              <a className="button secondary" href={assetUrl(slug, finalAudioPath)} download={`${slug}-final.m4a`}>
-                <Download size={16} aria-hidden="true" />
-                Download final M4A
-              </a>
-              <button
-                className="button secondary"
+              <Button asChild variant="secondary">
+                <a href={assetUrl(slug, finalAudioPath)} download={`${slug}-final.m4a`}>
+                  <Download size={16} aria-hidden="true" />
+                  Download final M4A
+                </a>
+              </Button>
+              <Button
+                variant="secondary"
                 type="button"
                 title="Reveal the final audio file in Finder"
                 onClick={onRevealFinalAudio}
               >
                 <FolderOpen size={16} aria-hidden="true" />
                 Reveal in Finder
-              </button>
+              </Button>
             </div>
           </>
         ) : (
           <p>Final audio will appear after concat.</p>
         )}
-      </div>
+      </Card>
 
       <div className="button-row">
-        <button
-          className="button secondary"
+        <Button
+          variant="secondary"
           type="button"
           onClick={() => onStartJob('generate_verify_tts')}
           disabled={!canGenerate}
         >
           <AudioLines size={16} aria-hidden="true" />
           Generate + verify TTS
-        </button>
-        <button className="button secondary" type="button" onClick={onConfirmVerifiedAudio} disabled={!canConfirmVerified}>
+        </Button>
+        <Button variant="secondary" type="button" onClick={onConfirmVerifiedAudio} disabled={!canConfirmVerified}>
           <Check size={16} aria-hidden="true" />
           Confirm verified output
-        </button>
-        <button
-          className="button secondary"
+        </Button>
+        <Button
+          variant="secondary"
           type="button"
           onClick={() => onStartJob('concat_audio')}
           disabled={!canConcat}
         >
           <Play size={16} aria-hidden="true" />
           Concat final WAV
-        </button>
-        <button className="button" type="button" onClick={onApproveFinalAudio} disabled={!finalAudioExists}>
+        </Button>
+        <Button type="button" onClick={onApproveFinalAudio} disabled={!finalAudioExists}>
           <Check size={16} aria-hidden="true" />
           Approve final audio
-        </button>
-        <button
-          className="button secondary"
+        </Button>
+        <Button
+          variant="secondary"
           type="button"
           disabled={!canGenerate || regenSelection.size === 0}
           title="Regenerate every checked segment in one job"
@@ -199,7 +206,7 @@ export const AudioTab: React.FC<AudioTabProps> = ({
         >
           <RefreshCw size={16} aria-hidden="true" />
           Regenerate selected ({regenSelection.size})
-        </button>
+        </Button>
       </div>
 
       <StoryPlayer
@@ -212,44 +219,43 @@ export const AudioTab: React.FC<AudioTabProps> = ({
       />
 
       <div className="button-row">
-        <button
-          className={showFlaggedOnly ? 'button' : 'button secondary'}
+        <Button
+          variant={showFlaggedOnly ? undefined : 'secondary'}
           type="button"
           onClick={() => setShowFlaggedOnly((current) => !current)}
           disabled={!showFlaggedOnly && flaggedCount === 0}
         >
           <Flag size={16} aria-hidden="true" />
           {showFlaggedOnly ? 'Show all segments' : `Show flagged only (${flaggedCount})`}
-        </button>
+        </Button>
       </div>
 
-      <div className="table-wrap">
-      <table className="table">
-        <thead>
-          <tr>
-            <th />
-            <th />
-            <th>ID</th>
-            <th>Speaker</th>
-            <th>Verification</th>
-            <th>Duration</th>
-            <th>Previous take</th>
-            <th />
-          </tr>
-        </thead>
-        <tbody>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead />
+            <TableHead />
+            <TableHead>ID</TableHead>
+            <TableHead>Speaker</TableHead>
+            <TableHead>Verification</TableHead>
+            <TableHead>Duration</TableHead>
+            <TableHead>Previous take</TableHead>
+            <TableHead />
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {visibleSegments.length === 0 ? (
-            <tr>
-              <td colSpan={8} className="label">
+            <TableRow>
+              <TableCell colSpan={8} className="label">
                 No flagged segments.
-              </td>
-            </tr>
+              </TableCell>
+            </TableRow>
           ) : null}
           {visibleSegments.map((segment) => (
-            <tr key={segment.id} className={segment.flagged ? 'row-flagged' : undefined}>
-              <td>
-                <button
-                  className="button secondary"
+            <TableRow key={segment.id} className={segment.flagged ? 'row-flagged' : undefined}>
+              <TableCell>
+                <Button
+                  variant="secondary"
                   type="button"
                   title={segment.flagged ? 'Unflag this segment' : 'Flag this segment for review'}
                   aria-pressed={segment.flagged}
@@ -260,45 +266,44 @@ export const AudioTab: React.FC<AudioTabProps> = ({
                     aria-hidden="true"
                     fill={segment.flagged ? 'currentColor' : 'none'}
                   />
-                </button>
-              </td>
-              <td>
+                </Button>
+              </TableCell>
+              <TableCell>
                 {segment.status !== 'skipped' ? (
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     checked={regenSelection.has(segment.id)}
-                    onChange={() => onToggleRegenSelection(segment.id)}
+                    onCheckedChange={() => onToggleRegenSelection(segment.id)}
                     aria-label={`Select segment ${segment.id} for regeneration`}
                   />
                 ) : null}
-              </td>
-              <td className="mono">
+              </TableCell>
+              <TableCell className="mono">
                 {playingSegment?.id === segment.id ? '▶ ' : ''}
                 {segment.id}
-              </td>
-              <td>{segment.speakerId}</td>
-              <td>
-                <span
-                  className={
+              </TableCell>
+              <TableCell>{segment.speakerId}</TableCell>
+              <TableCell>
+                <Badge
+                  variant={
                     segment.verification.status === 'passed'
-                      ? 'badge good'
+                      ? 'good'
                       : segment.verification.status === 'failed' || segment.verification.status === 'max_attempts_reached'
-                        ? 'badge bad'
-                        : 'badge warn'
+                        ? 'bad'
+                        : 'warn'
                   }
                 >
                   {segment.verification.status}
-                </span>
+                </Badge>
                 <div className="label">attempts {segment.verification.attempts}</div>
-              </td>
-              <td>
+              </TableCell>
+              <TableCell>
                 {segment.status === 'complete' || segment.verification.status === 'passed' ? (
                   <AudioDurationCell src={assetUrl(slug, segmentAudioPath(segment))} />
                 ) : (
                   <span className="label">No audio</span>
                 )}
-              </td>
-              <td>
+              </TableCell>
+              <TableCell>
                 {segment.previousTake ? (
                   <div className="button-row">
                     <audio
@@ -307,34 +312,34 @@ export const AudioTab: React.FC<AudioTabProps> = ({
                       style={{ height: 28, width: 160 }}
                       src={assetUrl(slug, segment.previousTake.path)}
                     />
-                    <button
-                      className="button secondary"
+                    <Button
+                      variant="secondary"
                       type="button"
                       title="Switch this segment back to its previous audio take"
                       onClick={() => onSelectSegmentTake(segment.id)}
                     >
                       <History size={15} aria-hidden="true" />
                       Use this take
-                    </button>
+                    </Button>
                   </div>
                 ) : (
                   <span className="label">—</span>
                 )}
-              </td>
-              <td>
+              </TableCell>
+              <TableCell>
                 {segment.status !== 'skipped' ? (
                   <div className="button-row">
-                    <button
-                      className="button secondary"
+                    <Button
+                      variant="secondary"
                       type="button"
                       disabled={!playableSegments.some((candidate) => candidate.id === segment.id)}
                       title="Play the story from this segment onward"
                       onClick={() => onPlayFromSegment(segment.id)}
                     >
                       <Play size={15} aria-hidden="true" />
-                    </button>
-                    <button
-                      className="button secondary"
+                    </Button>
+                    <Button
+                      variant="secondary"
                       type="button"
                       disabled={!canGenerate}
                       title={canGenerate ? `Regenerate and verify segment ${segment.id} only` : 'Approve segments and assign voices first'}
@@ -342,16 +347,15 @@ export const AudioTab: React.FC<AudioTabProps> = ({
                     >
                       <RefreshCw size={15} aria-hidden="true" />
                       Regenerate
-                    </button>
+                    </Button>
                   </div>
                 ) : null}
-              </td>
-            </tr>
+              </TableCell>
+            </TableRow>
           ))}
-        </tbody>
-      </table>
-      </div>
-    </section>
+        </TableBody>
+      </Table>
+    </Card>
   );
 };
 

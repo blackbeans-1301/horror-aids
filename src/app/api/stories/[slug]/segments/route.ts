@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { patchStory, readSegments, writeSegments } from '@/lib/json-store';
+import { normalizeStoryText } from '@/lib/text-normalize';
 import type { SegmentAudioTake, SegmentVerification } from '@/types/story';
 import type {
   SegmentEmotion,
@@ -85,7 +86,7 @@ function normalizeSegments(input: unknown): SegmentRecord[] {
         typeof record.speakerId === 'string' && record.speakerId.trim()
           ? record.speakerId.trim()
           : 'narrator';
-      const text = typeof record.text === 'string' ? record.text : '';
+      const text = typeof record.text === 'string' ? normalizeStoryText(record.text) : '';
       const order = Number.isFinite(Number(record.order))
         ? Number(record.order)
         : index + 1;

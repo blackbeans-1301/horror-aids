@@ -260,7 +260,7 @@ def render(ctx) -> int:
     # losing its edges costs nothing), rebuild monotonic timestamps after the
     # loop (defends against PTS discontinuities at each -stream_loop boundary
     # surviving into concat), light config-driven grade.
-    grade = video_config["grade"]
+    grade = common.resolve_grade(video_config, scene_video, plan)
     main_video_chain = [
         f"scale={width}:{height}:force_original_aspect_ratio=increase",
         f"crop={width}:{height}",
@@ -268,10 +268,8 @@ def render(ctx) -> int:
         "format=yuv420p",
         f"fps={fps}",
         "setpts=N/FRAME_RATE/TB",
-        f"eq=brightness={grade['brightness']}:saturation={grade['saturation']}",
+        common.build_scene_grade_filter(grade),
     ]
-    if grade.get("vignette"):
-        main_video_chain.append("vignette=PI/5")
     main_video_chain.append(f"fade=t=in:st=0:d={trans_sec:.6f}")
     main_video_chain.append(f"fade=t=out:st={max(0.0, main_sec - 2):.6f}:d=2")
     main_video_filter = f"[{scene_idx}:v]" + ",".join(main_video_chain) + "[vmain]"

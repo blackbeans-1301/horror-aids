@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { toast } from 'react-toastify';
+import { toast } from 'sonner';
 
 import { storiesApi, type VoiceOption } from '@/features/stories/api/storiesApi';
 import type {
@@ -9,6 +9,7 @@ import type {
   SegmentRecord,
   StoryDetail,
   VideoPlanFile,
+  YoutubeMetadataFieldGroup,
   YoutubeMetadataFile,
 } from '@/types/story';
 
@@ -436,6 +437,14 @@ export function useStoryWorkspace(slug: string) {
     }, 'Picked new media for this story — Render when ready.');
   }, [clearDirty, runAction, slug]);
 
+  const resetVideoPlanGain = useCallback(async (): Promise<void> => {
+    await runAction(async () => {
+      const next = await storiesApi.resetVideoPlanGain(slug);
+      setVideoPlan(next);
+      clearDirty('videoPlan');
+    }, 'Đã đồng bộ lại gain từ media library.');
+  }, [clearDirty, runAction, slug]);
+
   const uploadIntroImage = useCallback(async (file: File): Promise<void> => {
     await runAction(async () => {
       const next = await storiesApi.uploadIntroImage(slug, file);
@@ -501,13 +510,16 @@ export function useStoryWorkspace(slug: string) {
     }, 'Đã lưu metadata.');
   }, [clearDirty, runAction, slug, youtubeMetadata]);
 
-  const generateYoutubeMetadata = useCallback(async (): Promise<void> => {
-    await runAction(async () => {
-      const next = await storiesApi.generateYoutubeMetadata(slug);
-      setYoutubeMetadata(next);
-      clearDirty('youtubeMetadata');
-    }, 'Đã generate metadata YouTube.');
-  }, [clearDirty, runAction, slug]);
+  const generateYoutubeMetadata = useCallback(
+    async (fields?: YoutubeMetadataFieldGroup[]): Promise<void> => {
+      await runAction(async () => {
+        const next = await storiesApi.generateYoutubeMetadata(slug, fields);
+        setYoutubeMetadata(next);
+        clearDirty('youtubeMetadata');
+      }, fields ? 'Đã regenerate phần đã chọn.' : 'Đã generate metadata YouTube.');
+    },
+    [clearDirty, runAction, slug],
+  );
 
   const approveYoutubeMetadata = useCallback(async (): Promise<void> => {
     await runAction(async () => {
@@ -735,6 +747,7 @@ export function useStoryWorkspace(slug: string) {
     updateVideoPlan,
     saveVideoPlan,
     randomizeVideoPlan,
+    resetVideoPlanGain,
     uploadIntroImage,
     deleteIntroImage,
     approveFinalVideo,

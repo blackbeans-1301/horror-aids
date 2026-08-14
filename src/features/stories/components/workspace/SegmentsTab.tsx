@@ -2,6 +2,12 @@ import { Check, Save, Trash2 } from 'lucide-react';
 import React from 'react';
 
 import { useConfirm } from '@/components/ConfirmDialog';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardTitle } from '@/components/ui/card';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Textarea } from '@/components/ui/textarea';
 import type { CharacterRecord, SegmentEmotion, SegmentRecord } from '@/types/story';
 
 interface SegmentsTabProps {
@@ -53,10 +59,10 @@ export const SegmentsTab: React.FC<SegmentsTabProps> = ({
   };
 
   return (
-    <section className="panel form">
+    <Card>
       <div className="page-header">
         <div>
-          <h2>Segments</h2>
+          <CardTitle>Segments</CardTitle>
           <p>
             Approve these rows before TTS. Editing them later resets verification. Emotion
             &quot;storytelling&quot; suits narration; &quot;natural&quot; suits dialogue. You can also type
@@ -64,12 +70,12 @@ export const SegmentsTab: React.FC<SegmentsTabProps> = ({
           </p>
         </div>
         <div className="button-row">
-          {isDirty ? <span className="badge unsaved">Unsaved changes</span> : null}
-          <button className="button secondary" type="button" onClick={onAddSegment}>
+          {isDirty ? <Badge variant="warn">Unsaved changes</Badge> : null}
+          <Button variant="secondary" type="button" onClick={onAddSegment}>
             Add segment
-          </button>
-          <button
-            className="button secondary"
+          </Button>
+          <Button
+            variant="secondary"
             type="button"
             onClick={onSaveSegments}
             disabled={isBusy || hasActiveJob}
@@ -81,16 +87,15 @@ export const SegmentsTab: React.FC<SegmentsTabProps> = ({
           >
             <Save size={16} aria-hidden="true" />
             Save segments
-          </button>
-          <button
-            className="button"
+          </Button>
+          <Button
             type="button"
             onClick={onApproveSegments}
             disabled={isBusy || segments.length === 0 || !voicesReady}
           >
             <Check size={16} aria-hidden="true" />
             Accept segments for TTS
-          </button>
+          </Button>
         </div>
       </div>
       {segments.length > 0 && !voicesReady ? (
@@ -104,82 +109,87 @@ export const SegmentsTab: React.FC<SegmentsTabProps> = ({
           it), so edits made mid-run don&apos;t end up out of sync with audio it just generated.
         </p>
       ) : null}
-      <div className="table-wrap">
-      <table className="table">
-        <thead>
-          <tr>
-            <th>Order</th>
-            <th>Speaker</th>
-            <th>Text</th>
-            <th>Emotion</th>
-            <th>Status</th>
-            <th />
-          </tr>
-        </thead>
-        <tbody>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Order</TableHead>
+            <TableHead>Speaker</TableHead>
+            <TableHead>Text</TableHead>
+            <TableHead>Emotion</TableHead>
+            <TableHead>Status</TableHead>
+            <TableHead />
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {segments.map((segment, index) => (
-            <tr key={`${segment.id}-${index}`}>
-              <td className="mono">{segment.order}</td>
-              <td>
-                <select
-                  className="select"
+            <TableRow key={`${segment.id}-${index}`}>
+              <TableCell className="mono">{segment.order}</TableCell>
+              <TableCell>
+                <Select
                   value={segment.speakerId}
-                  onChange={(event) => onUpdateSegment(index, { speakerId: event.target.value })}
+                  onValueChange={(value) => onUpdateSegment(index, { speakerId: value })}
                 >
-                  {characters.map((character) => (
-                    <option key={character.id} value={character.id}>
-                      {character.name}
-                    </option>
-                  ))}
-                </select>
-              </td>
-              <td>
-                <textarea
-                  className="textarea"
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {characters.map((character) => (
+                      <SelectItem key={character.id} value={character.id}>
+                        {character.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </TableCell>
+              <TableCell>
+                <Textarea
                   value={segment.text}
                   onChange={(event) => onUpdateSegment(index, { text: event.target.value })}
                 />
-              </td>
-              <td>
-                <select
-                  className="select"
+              </TableCell>
+              <TableCell>
+                <Select
                   value={segment.emotion ?? 'natural'}
-                  onChange={(event) => onUpdateSegment(index, { emotion: event.target.value as SegmentEmotion })}
+                  onValueChange={(value) => onUpdateSegment(index, { emotion: value as SegmentEmotion })}
                 >
-                  <option value="natural">natural</option>
-                  <option value="storytelling">storytelling</option>
-                </select>
-              </td>
-              <td>
-                <span className="badge">{segment.status}</span>
-              </td>
-              <td>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="natural">natural</SelectItem>
+                    <SelectItem value="storytelling">storytelling</SelectItem>
+                  </SelectContent>
+                </Select>
+              </TableCell>
+              <TableCell>
+                <Badge>{segment.status}</Badge>
+              </TableCell>
+              <TableCell>
                 <div className="button-row">
-                  <button
-                    className="button secondary"
+                  <Button
+                    variant="secondary"
                     type="button"
                     title="Insert a new segment below this one"
                     onClick={() => onInsertSegmentAfter(index)}
                   >
                     + Below
-                  </button>
-                  <button className="button secondary" type="button" onClick={() => onSplitSegment(index)}>
+                  </Button>
+                  <Button variant="secondary" type="button" onClick={() => onSplitSegment(index)}>
                     Split
-                  </button>
-                  <button className="button secondary" type="button" onClick={() => onMergeWithNext(index)}>
+                  </Button>
+                  <Button variant="secondary" type="button" onClick={() => onMergeWithNext(index)}>
                     Merge
-                  </button>
-                  <button className="button danger" type="button" onClick={() => void handleDelete(index)}>
+                  </Button>
+                  <Button variant="destructive" type="button" onClick={() => void handleDelete(index)}>
                     <Trash2 size={15} aria-hidden="true" />
-                  </button>
+                  </Button>
                 </div>
-              </td>
-            </tr>
+              </TableCell>
+            </TableRow>
           ))}
-        </tbody>
-      </table>
-      </div>
-    </section>
+        </TableBody>
+      </Table>
+    </Card>
   );
 };
 

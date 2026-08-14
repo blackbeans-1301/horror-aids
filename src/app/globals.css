@@ -1,3 +1,6 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
 :root {
   color-scheme: dark;
   --bg: #151414;
@@ -5,14 +8,64 @@
   --surface-2: #2a2725;
   --line: #3a3330;
   --text: #f4efe8;
-  --muted: #b7aaa0;
+  --text-muted: #b7aaa0;
   --danger: #df5d4d;
-  --accent: #c88f3d;
-  --accent-2: #6fa987;
-  --accent-wash: rgba(200, 143, 61, 0.12);
-  --accent-2-wash: rgba(111, 169, 135, 0.14);
+  --brand: #c88f3d;
+  --brand-2: #6fa987;
+  --brand-wash: rgba(200, 143, 61, 0.12);
+  --brand-2-wash: rgba(111, 169, 135, 0.14);
   --button: #ead7bf;
   --button-text: #181512;
+
+  /* shadcn/ui tokens — derived from the palette above so new components
+     match the existing dark "horror radio" look. This app has exactly one
+     (dark) theme, so there is no separate .dark block. */
+  --background: var(--bg);
+  --foreground: var(--text);
+  --card: var(--surface);
+  --card-foreground: var(--text);
+  --popover: var(--surface);
+  --popover-foreground: var(--text);
+  --primary: var(--button);
+  --primary-foreground: var(--button-text);
+  --secondary: var(--surface-2);
+  --secondary-foreground: var(--text);
+  --muted: var(--surface-2);
+  --muted-foreground: var(--text-muted);
+  --accent: var(--brand-wash);
+  --accent-foreground: var(--text);
+  --destructive: var(--danger);
+  --destructive-foreground: var(--text);
+  --border: var(--line);
+  --input: var(--line);
+  --ring: var(--brand);
+  --radius: 0.375rem;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
 }
 
 * {
@@ -73,10 +126,10 @@ a {
 .brand-mark {
   width: 34px;
   height: 34px;
-  border: 1px solid var(--accent);
+  border: 1px solid var(--brand);
   display: grid;
   place-items: center;
-  color: var(--accent);
+  color: var(--brand);
 }
 
 .topnav {
@@ -100,7 +153,7 @@ a {
 }
 
 .eyebrow {
-  color: var(--accent);
+  color: var(--brand);
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -134,11 +187,17 @@ h3 {
 }
 
 p {
-  color: var(--muted);
+  color: var(--text-muted);
   line-height: 1.55;
 }
 
-.grid {
+/* Named layout-grid, not grid — Tailwind's own `grid` utility class would
+   otherwise collide: Tailwind wraps its utilities in a CSS cascade layer,
+   and an unlayered rule of equal specificity (like a plain handwritten
+   class here) always wins over any layered rule regardless of source
+   order, so a bare `.grid` here would silently break every shadcn/ui
+   component's `grid` utility class across the whole app. */
+.layout-grid {
   display: grid;
   grid-template-columns: minmax(300px, 420px) 1fr;
   gap: 22px;
@@ -179,7 +238,7 @@ p {
   gap: 14px;
   padding: 14px 16px;
   border: 1px solid var(--line);
-  border-left: 2px solid var(--accent);
+  border-left: 2px solid var(--brand);
   background: var(--surface-2);
   border-radius: 8px;
   transition: background-color 0.15s ease, border-color 0.15s ease;
@@ -187,7 +246,7 @@ p {
 
 .story-item:hover {
   background: #2f2b28;
-  border-color: var(--accent);
+  border-color: var(--brand);
 }
 
 .story-item.archived {
@@ -205,7 +264,7 @@ p {
   display: flex;
   align-items: center;
   gap: 10px;
-  color: var(--muted);
+  color: var(--text-muted);
   border-left-color: var(--line);
 }
 
@@ -220,6 +279,7 @@ p {
 }
 
 .field.row {
+  grid-template-columns: auto 1fr auto;
   grid-auto-flow: column;
   justify-content: start;
   align-items: center;
@@ -228,7 +288,7 @@ p {
 
 .label {
   font-size: 12px;
-  color: var(--muted);
+  color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
@@ -258,7 +318,7 @@ p {
 .input:focus,
 .textarea:focus,
 .select:focus {
-  border-color: var(--accent);
+  border-color: var(--brand);
 }
 
 .button-row {
@@ -320,8 +380,8 @@ p {
 }
 
 .button.secondary:not(:disabled):hover {
-  border-color: var(--accent);
-  background: var(--accent-wash);
+  border-color: var(--brand);
+  background: var(--brand-wash);
 }
 
 .tabs {
@@ -337,7 +397,7 @@ p {
   gap: 7px;
   border: 1px solid var(--line);
   background: transparent;
-  color: var(--muted);
+  color: var(--text-muted);
   border-radius: 6px;
   padding: 8px 11px;
   cursor: pointer;
@@ -349,12 +409,12 @@ p {
 
 .tab.active .badge {
   background: rgba(200, 143, 61, 0.2);
-  color: var(--accent);
+  color: var(--brand);
 }
 
 .tab.active {
   color: var(--text);
-  border-color: var(--accent);
+  border-color: var(--brand);
   background: rgba(200, 143, 61, 0.12);
 }
 
@@ -372,15 +432,15 @@ p {
   padding: 3px 8px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.06);
-  color: var(--muted);
+  color: var(--text-muted);
   border: 1px solid var(--line);
   font-size: 12px;
 }
 
 .badge.good {
   color: #bde3ce;
-  border-color: var(--accent-2);
-  background: var(--accent-2-wash);
+  border-color: var(--brand-2);
+  background: var(--brand-2-wash);
 }
 
 .badge.warn {
@@ -411,7 +471,7 @@ p {
 }
 
 .table tbody tr:hover {
-  background: var(--accent-wash);
+  background: var(--brand-wash);
 }
 
 .table tbody tr.row-flagged {
@@ -424,7 +484,7 @@ p {
 }
 
 .table th {
-  color: var(--muted);
+  color: var(--text-muted);
   font-size: 12px;
   text-align: left;
   text-transform: uppercase;
@@ -494,7 +554,7 @@ p {
 
 .markdown-body h4 {
   font-size: 14px;
-  color: var(--muted);
+  color: var(--text-muted);
 }
 
 .markdown-body p {
@@ -543,10 +603,10 @@ p {
 }
 
 .markdown-body blockquote {
-  border-left: 3px solid var(--accent);
+  border-left: 3px solid var(--brand);
   margin: 0 0 1em;
   padding: 2px 0 2px 12px;
-  color: var(--muted);
+  color: var(--text-muted);
 }
 
 .markdown-body hr {
@@ -556,7 +616,7 @@ p {
 }
 
 .markdown-body a {
-  color: var(--accent);
+  color: var(--brand);
 }
 
 .markdown-body table {
@@ -591,7 +651,7 @@ p {
   text-align: left;
   border: 1px solid var(--line);
   background: transparent;
-  color: var(--muted);
+  color: var(--text-muted);
   border-radius: 6px;
   padding: 8px 10px;
   font-size: 13px;
@@ -600,7 +660,7 @@ p {
 
 .chapter-list-item.active {
   color: var(--text);
-  border-color: var(--accent);
+  border-color: var(--brand);
   background: rgba(200, 143, 61, 0.12);
 }
 
@@ -623,7 +683,7 @@ a:focus-visible,
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--brand);
   outline-offset: 2px;
 }
 
@@ -654,8 +714,8 @@ textarea:focus-visible {
 }
 
 .scroll-fab:hover:not(:disabled) {
-  background: var(--accent-wash);
-  border-color: var(--accent);
+  background: var(--brand-wash);
+  border-color: var(--brand);
   transform: translateY(-1px);
 }
 
@@ -682,8 +742,8 @@ textarea:focus-visible {
   gap: 10px;
   padding: 10px 14px;
   margin-bottom: 18px;
-  border: 1px solid var(--accent);
-  background: var(--accent-wash);
+  border: 1px solid var(--brand);
+  background: var(--brand-wash);
   border-radius: 8px;
   color: var(--text);
 }
@@ -704,7 +764,7 @@ textarea:focus-visible {
 .waveform-divider span {
   flex: 1 0 auto;
   width: 3px;
-  background: var(--accent);
+  background: var(--brand);
   border-radius: 2px;
 }
 
@@ -760,14 +820,14 @@ textarea:focus-visible {
   color: var(--text);
   background: var(--surface-2);
   border: 1px solid var(--line);
-  border-left: 2px solid var(--accent);
+  border-left: 2px solid var(--brand);
   border-radius: 8px;
   padding: 14px 16px;
   white-space: pre-wrap;
 }
 
 @media (max-width: 920px) {
-  .grid,
+  .layout-grid,
   .split,
   .chapter-layout {
     grid-template-columns: 1fr;

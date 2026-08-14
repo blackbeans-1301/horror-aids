@@ -40,14 +40,12 @@ export function slugifyForHashtag(title: string): string {
 
 export async function renderYoutubeDescription(input: {
   title: string;
-  contextHook: string;
   teaser: string;
   storyHashtag: string;
 }): Promise<string> {
   const template = await loadTemplate();
   return template
     .replaceAll('{{title}}', input.title)
-    .replaceAll('{{contextHook}}', input.contextHook)
     .replaceAll('{{storyTitleCaps}}', input.title.toLocaleUpperCase('vi-VN'))
     .replaceAll('{{teaser}}', input.teaser)
     .replaceAll('{{storyHashtag}}', input.storyHashtag);

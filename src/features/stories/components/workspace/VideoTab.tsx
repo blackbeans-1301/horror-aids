@@ -11,11 +11,22 @@ import {
 } from 'lucide-react';
 import Image from 'next/image';
 import React, { useEffect, useRef, useState } from 'react';
-import { toast } from 'react-toastify';
+import { toast } from 'sonner';
 
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardTitle } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { mediaApi } from '@/features/stories/api/mediaApi';
+import { GradeOverrideEditor } from '@/features/stories/components/GradeOverrideEditor';
+import { useVideoGradeConfig } from '@/features/stories/hooks/useVideoGradeConfig';
 import { assetUrl } from '@/features/stories/utils/asset';
 import { formatLongDuration } from '@/features/stories/utils/format';
+import { resolveGrade } from '@/lib/grade';
 import type { MediaAsset, MediaCategory, VideoPlanFile, VideoRenderSummary } from '@/types/story';
 
 interface VideoTabProps {
@@ -30,6 +41,7 @@ interface VideoTabProps {
   onUpdatePlan: (patch: Partial<VideoPlanFile>) => void;
   onSavePlan: () => void;
   onRandomize: () => void;
+  onResetGain: () => void;
   onUploadIntroImage: (file: File) => void;
   onDeleteIntroImage: () => void;
   onStartRender: () => void;
@@ -45,6 +57,11 @@ const CATEGORY_LABELS: Record<MediaCategory, string> = {
   intro_music: 'Nhạc intro',
   scene_video: 'Video bối cảnh',
 };
+
+// Radix's SelectItem throws if given an empty-string value, so the "none
+// picked" option needs a non-empty sentinel — translated back to null right
+// at the AssetSelect boundary, never leaking into onChange/onUpdatePlan.
+const NONE_VALUE = '__none__';
 
 function useMediaByCategory(): Record<MediaCategory, MediaAsset[]> {
   const [byCategory, setByCategory] = useState<Record<MediaCategory, MediaAsset[]>>({
@@ -76,28 +93,32 @@ const AssetSelect: React.FC<{
   disabled: boolean;
   required?: boolean;
 }> = ({ category, options, value, onChange, disabled, required }) => (
-  <label className="field">
-    <span className="label">
+  <div className="grid gap-1.5">
+    <Label>
       {CATEGORY_LABELS[category]}
       {required ? ' *' : ' (tùy chọn)'}
-    </span>
-    <select
-      className="select"
-      value={value ?? ''}
-      onChange={(event) => onChange(event.target.value || null)}
+    </Label>
+    <Select
+      value={value ?? NONE_VALUE}
+      onValueChange={(next) => onChange(next === NONE_VALUE ? null : next)}
       disabled={disabled}
     >
-      <option value="">{required ? '— chọn —' : '(không dùng)'}</option>
-      {options.map((asset) => (
-        <option key={asset.id} value={asset.id}>
-          {asset.name}
-        </option>
-      ))}
-    </select>
+      <SelectTrigger disabled={disabled}>
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value={NONE_VALUE}>{required ? '— chọn —' : '(không dùng)'}</SelectItem>
+        {options.map((asset) => (
+          <SelectItem key={asset.id} value={asset.id}>
+            {asset.name}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
     {options.length === 0 ? (
       <span className="label">Chưa có gì trong danh mục này — thêm ở Settings.</span>
     ) : null}
-  </label>
+  </div>
 );
 
 export const VideoTab: React.FC<VideoTabProps> = ({
@@ -112,6 +133,7 @@ export const VideoTab: React.FC<VideoTabProps> = ({
   onUpdatePlan,
   onSavePlan,
   onRandomize,
+  onResetGain,
   onUploadIntroImage,
   onDeleteIntroImage,
   onStartRender,
@@ -121,15 +143,22 @@ export const VideoTab: React.FC<VideoTabProps> = ({
   onDeleteRender,
 }) => {
   const mediaByCategory = useMediaByCategory();
+  const videoGradeConfig = useVideoGradeConfig();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   if (!videoPlan) {
     return (
-      <section className="panel form">
+      <Card className="grid gap-3">
         <p className="label">Loading video plan...</p>
-      </section>
+      </Card>
     );
   }
+
+  const selectedSceneAsset = mediaByCategory.scene_video.find((asset) => asset.id === videoPlan.sceneVideoId);
+  const sceneAssetGradeOverride =
+    selectedSceneAsset && selectedSceneAsset.category === 'scene_video'
+      ? selectedSceneAsset.gradeOverride
+      : null;
 
   const handleChooseIntroImage = (): void => {
     const file = fileInputRef.current?.files?.[0];
@@ -144,7 +173,7 @@ export const VideoTab: React.FC<VideoTabProps> = ({
   };
 
   return (
-    <section className="panel form">
+    <Card className="grid gap-3">
       <div className="page-header">
         <div>
           <h2>Video Assembly</h2>
@@ -155,8 +184,8 @@ export const VideoTab: React.FC<VideoTabProps> = ({
         </div>
       </div>
 
-      <div className="panel">
-        <h3>Intro Image (per-story upload)</h3>
+      <Card>
+        <CardTitle>Intro Image (per-story upload)</CardTitle>
         {videoPlan.introImagePath ? (
           <>
             <Image
@@ -168,14 +197,14 @@ export const VideoTab: React.FC<VideoTabProps> = ({
               style={{ width: 320, height: 180, objectFit: 'cover' }}
             />
             <div className="button-row">
-              <button className="button secondary" type="button" onClick={() => fileInputRef.current?.click()} disabled={isBusy}>
+              <Button variant="secondary" type="button" onClick={() => fileInputRef.current?.click()} disabled={isBusy}>
                 <ImageIcon size={16} aria-hidden="true" />
                 Replace
-              </button>
-              <button className="button danger" type="button" onClick={onDeleteIntroImage} disabled={isBusy}>
+              </Button>
+              <Button variant="destructive" type="button" onClick={onDeleteIntroImage} disabled={isBusy}>
                 <Trash2 size={16} aria-hidden="true" />
                 Remove
-              </button>
+              </Button>
             </div>
           </>
         ) : (
@@ -183,10 +212,10 @@ export const VideoTab: React.FC<VideoTabProps> = ({
             <p className="label">
               Required before rendering — this is the only input that has no library to pick from.
             </p>
-            <button className="button" type="button" onClick={() => fileInputRef.current?.click()} disabled={isBusy}>
+            <Button type="button" onClick={() => fileInputRef.current?.click()} disabled={isBusy}>
               <ImageIcon size={16} aria-hidden="true" />
               Upload intro image
-            </button>
+            </Button>
           </>
         )}
         <input
@@ -196,13 +225,13 @@ export const VideoTab: React.FC<VideoTabProps> = ({
           hidden
           onChange={handleChooseIntroImage}
         />
-      </div>
+      </Card>
 
       <div className="button-row">
-        <button className="button secondary" type="button" onClick={onRandomize} disabled={isBusy}>
+        <Button variant="secondary" type="button" onClick={onRandomize} disabled={isBusy}>
           <Dice5 size={16} aria-hidden="true" />
           Random hoá lại
-        </button>
+        </Button>
         <span className="label">Tự động chọn nhạc/video nền — đổi lại từng ô dưới đây nếu cần.</span>
       </div>
 
@@ -236,11 +265,27 @@ export const VideoTab: React.FC<VideoTabProps> = ({
         disabled={isBusy}
       />
 
+      {videoGradeConfig ? (
+        <Card>
+          <GradeOverrideEditor
+            title="Hiệu ứng làm tối (grade) — riêng cho story này"
+            value={videoPlan.gradeOverride}
+            onChange={(next) => onUpdatePlan({ gradeOverride: next })}
+            resolved={resolveGrade(videoGradeConfig, sceneAssetGradeOverride, videoPlan.gradeOverride)}
+            previewAssetId={videoPlan.sceneVideoId}
+            disabled={isBusy}
+          />
+          <p className="label">
+            Ghi đè lên mức mặc định của chính video (Media Library) chỉ cho story này — hữu ích khi
+            video bối cảnh này vốn đã tối hơn bình thường.
+          </p>
+        </Card>
+      ) : null}
+
       <div className="settings-grid">
-        <label className="field">
-          <span className="label">Intro duration (ms)</span>
-          <input
-            className="input"
+        <div className="grid gap-1.5">
+          <Label>Intro duration (ms)</Label>
+          <Input
             type="number"
             min={3000}
             max={30000}
@@ -249,11 +294,10 @@ export const VideoTab: React.FC<VideoTabProps> = ({
             onChange={(event) => onUpdatePlan({ introDurationMs: Number(event.target.value) })}
             disabled={isBusy}
           />
-        </label>
-        <label className="field">
-          <span className="label">Lead-in before narration (ms)</span>
-          <input
-            className="input"
+        </div>
+        <div className="grid gap-1.5">
+          <Label>Lead-in before narration (ms)</Label>
+          <Input
             type="number"
             min={0}
             max={10000}
@@ -262,11 +306,10 @@ export const VideoTab: React.FC<VideoTabProps> = ({
             onChange={(event) => onUpdatePlan({ leadInMs: Number(event.target.value) })}
             disabled={isBusy}
           />
-        </label>
-        <label className="field">
-          <span className="label">Tail-out after narration (ms)</span>
-          <input
-            className="input"
+        </div>
+        <div className="grid gap-1.5">
+          <Label>Tail-out after narration (ms)</Label>
+          <Input
             type="number"
             min={0}
             max={30000}
@@ -275,91 +318,98 @@ export const VideoTab: React.FC<VideoTabProps> = ({
             onChange={(event) => onUpdatePlan({ tailOutMs: Number(event.target.value) })}
             disabled={isBusy}
           />
-        </label>
-        <label className="field">
-          <span className="label">Bg music gain (dB)</span>
-          <input
-            className="input"
+        </div>
+        <div className="grid gap-1.5">
+          <Label>Bg music gain (dB)</Label>
+          <Input
             type="number"
             step={1}
             value={videoPlan.bgMusicGainDb}
             onChange={(event) => onUpdatePlan({ bgMusicGainDb: Number(event.target.value) })}
             disabled={isBusy}
           />
-        </label>
-        <label className="field">
-          <span className="label">Rain gain (dB)</span>
-          <input
-            className="input"
+        </div>
+        <div className="grid gap-1.5">
+          <Label>Rain gain (dB)</Label>
+          <Input
             type="number"
             step={1}
             value={videoPlan.rainAmbienceGainDb}
             onChange={(event) => onUpdatePlan({ rainAmbienceGainDb: Number(event.target.value) })}
             disabled={isBusy}
           />
-        </label>
-        <label className="field">
-          <span className="label">Intro music gain (dB)</span>
-          <input
-            className="input"
+        </div>
+        <div className="grid gap-1.5">
+          <Label>Intro music gain (dB)</Label>
+          <Input
             type="number"
             step={1}
             value={videoPlan.introMusicGainDb}
             onChange={(event) => onUpdatePlan({ introMusicGainDb: Number(event.target.value) })}
             disabled={isBusy}
           />
-        </label>
-        <label className="field row">
-          <input
-            type="checkbox"
+        </div>
+        <label className="flex items-center gap-2">
+          <Checkbox
             checked={videoPlan.duckingEnabled}
-            onChange={(event) => onUpdatePlan({ duckingEnabled: event.target.checked })}
+            onCheckedChange={(checked) => onUpdatePlan({ duckingEnabled: checked === true })}
             disabled={isBusy}
           />
-          <span className="label">Duck music under narration</span>
+          <span className="text-xs uppercase tracking-wide text-muted-foreground">Duck music under narration</span>
         </label>
       </div>
 
+      {videoPlan.gainManuallyEdited ? (
+        <div className="button-row">
+          <Badge variant="warn">Gain đã tùy chỉnh cho story này — sẽ không tự đồng bộ khi approve final audio</Badge>
+          <Button variant="secondary" size="sm" type="button" onClick={onResetGain} disabled={isBusy}>
+            Đồng bộ lại từ library
+          </Button>
+        </div>
+      ) : null}
+
       <div className="button-row">
-        <button className="button secondary" type="button" onClick={onSavePlan} disabled={isBusy || !isDirty}>
+        <Button variant="secondary" type="button" onClick={onSavePlan} disabled={isBusy || !isDirty}>
           <Save size={16} aria-hidden="true" />
           Save plan
-        </button>
-        <button className="button secondary" type="button" onClick={onStartRender} disabled={!canRenderVideo}>
+        </Button>
+        <Button variant="secondary" type="button" onClick={onStartRender} disabled={!canRenderVideo}>
           <Clapperboard size={16} aria-hidden="true" />
           Render video
-        </button>
-        <button className="button" type="button" onClick={onApproveFinalVideo} disabled={!finalVideoExists}>
+        </Button>
+        <Button type="button" onClick={onApproveFinalVideo} disabled={!finalVideoExists}>
           <Check size={16} aria-hidden="true" />
           Approve final video
-        </button>
+        </Button>
       </div>
 
-      <div className="panel">
-        <h3>Final Video</h3>
+      <Card>
+        <CardTitle>Final Video</CardTitle>
         {finalVideoExists ? (
           <>
             <video controls width={480} src={assetUrl(slug, finalVideoPath)} />
             <div className="button-row">
-              <a className="button secondary" href={assetUrl(slug, finalVideoPath)} download={`${slug}-final.mp4`}>
-                <Download size={16} aria-hidden="true" />
-                Download final MP4
-              </a>
-              <button className="button secondary" type="button" onClick={onRevealFinalVideo}>
+              <Button asChild variant="secondary">
+                <a href={assetUrl(slug, finalVideoPath)} download={`${slug}-final.mp4`}>
+                  <Download size={16} aria-hidden="true" />
+                  Download final MP4
+                </a>
+              </Button>
+              <Button variant="secondary" type="button" onClick={onRevealFinalVideo}>
                 <FolderOpen size={16} aria-hidden="true" />
                 Reveal in Finder
-              </button>
+              </Button>
             </div>
           </>
         ) : (
           <p>Final video will appear after rendering.</p>
         )}
-      </div>
+      </Card>
 
-      <div className="panel">
-        <h3>
+      <Card>
+        <CardTitle>
           <History size={16} aria-hidden="true" /> Render History ({videoRenders.length})
-        </h3>
+        </CardTitle>
         <p className="label">
           Mỗi lần bấm &quot;Render video&quot; tạo ra một file riêng, không đè lên bản trước — dùng
           &quot;Dùng bản này&quot; để so sánh hoặc quay lại một cấu hình đã render trước đó.
@@ -367,67 +417,65 @@ export const VideoTab: React.FC<VideoTabProps> = ({
         {videoRenders.length === 0 ? (
           <p className="label">Chưa có bản render nào.</p>
         ) : (
-          <div className="table-wrap">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Thời gian</th>
-                  <th>Job</th>
-                  <th>Cấu hình</th>
-                  <th>Trạng thái</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {videoRenders.map((render) => (
-                  <tr key={render.jobId}>
-                    <td>{new Date(render.renderedAt).toLocaleString()}</td>
-                    <td className="mono">{render.jobId}</td>
-                    <td className="label">
-                      Intro {Math.round(render.plan.introDurationMs / 1000)}s · Lead-in{' '}
-                      {render.plan.leadInMs}ms · Tail {render.plan.tailOutMs}ms · BG{' '}
-                      {render.plan.bgMusicGainDb}dB · Rain {render.plan.rainAmbienceGainDb}dB · Intro
-                      music {render.plan.introMusicGainDb}dB · Duck{' '}
-                      {render.plan.duckingEnabled ? 'on' : 'off'} · {formatLongDuration(render.durationMs)}
-                    </td>
-                    <td>
-                      {render.isApproved ? (
-                        <span className="badge good">Approved</span>
-                      ) : render.isCurrent ? (
-                        <span className="badge warn">Current</span>
-                      ) : (
-                        <span className="badge">—</span>
-                      )}
-                    </td>
-                    <td>
-                      <div className="button-row">
-                        <button
-                          className="button secondary"
-                          type="button"
-                          disabled={isBusy || render.isCurrent}
-                          onClick={() => onSelectRender(render.jobId)}
-                        >
-                          Dùng bản này
-                        </button>
-                        <button
-                          className="button danger"
-                          type="button"
-                          disabled={isBusy || render.isCurrent}
-                          title={render.isCurrent ? 'Không thể xoá bản đang dùng' : 'Xoá bản render này'}
-                          onClick={() => onDeleteRender(render.jobId)}
-                        >
-                          <Trash2 size={15} aria-hidden="true" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Thời gian</TableHead>
+                <TableHead>Job</TableHead>
+                <TableHead>Cấu hình</TableHead>
+                <TableHead>Trạng thái</TableHead>
+                <TableHead />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {videoRenders.map((render) => (
+                <TableRow key={render.jobId}>
+                  <TableCell>{new Date(render.renderedAt).toLocaleString()}</TableCell>
+                  <TableCell className="font-mono text-xs">{render.jobId}</TableCell>
+                  <TableCell className="text-xs uppercase tracking-wide text-muted-foreground">
+                    Intro {Math.round(render.plan.introDurationMs / 1000)}s · Lead-in{' '}
+                    {render.plan.leadInMs}ms · Tail {render.plan.tailOutMs}ms · BG{' '}
+                    {render.plan.bgMusicGainDb}dB · Rain {render.plan.rainAmbienceGainDb}dB · Intro
+                    music {render.plan.introMusicGainDb}dB · Duck{' '}
+                    {render.plan.duckingEnabled ? 'on' : 'off'} · {formatLongDuration(render.durationMs)}
+                  </TableCell>
+                  <TableCell>
+                    {render.isApproved ? (
+                      <Badge variant="good">Approved</Badge>
+                    ) : render.isCurrent ? (
+                      <Badge variant="warn">Current</Badge>
+                    ) : (
+                      <Badge>—</Badge>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <div className="button-row">
+                      <Button
+                        variant="secondary"
+                        type="button"
+                        disabled={isBusy || render.isCurrent}
+                        onClick={() => onSelectRender(render.jobId)}
+                      >
+                        Dùng bản này
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        type="button"
+                        disabled={isBusy || render.isCurrent}
+                        title={render.isCurrent ? 'Không thể xoá bản đang dùng' : 'Xoá bản render này'}
+                        onClick={() => onDeleteRender(render.jobId)}
+                      >
+                        <Trash2 size={15} aria-hidden="true" />
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         )}
-      </div>
-    </section>
+      </Card>
+    </Card>
   );
 };
 

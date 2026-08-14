@@ -6,9 +6,12 @@ import { ArrowLeft, FileInput, RefreshCcw } from 'lucide-react';
 import React, { useCallback, useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { toast } from 'react-toastify';
+import { toast } from 'sonner';
 
 import { useConfirm } from '@/components/ConfirmDialog';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
 import { libraryApi } from '@/features/library/api/libraryApi';
 import { storiesApi } from '@/features/stories/api/storiesApi';
 import { AppShell } from '@/features/stories/components/AppShell';
@@ -105,10 +108,12 @@ export const ContentStoryDetailClient: React.FC<{ id: string }> = ({ id }) => {
   return (
     <AppShell>
       <main className="page">
-        <Link className="button secondary small" href="/library">
-          <ArrowLeft size={14} aria-hidden="true" />
-          Thư viện truyện
-        </Link>
+        <Button asChild variant="secondary" size="sm">
+          <Link href="/library">
+            <ArrowLeft size={14} aria-hidden="true" />
+            Thư viện truyện
+          </Link>
+        </Button>
 
         {message ? (
           <div className="status-banner">
@@ -124,7 +129,7 @@ export const ContentStoryDetailClient: React.FC<{ id: string }> = ({ id }) => {
                 <h1>{detail.title}</h1>
                 <div className="status-line">
                   <span className="mono">{detail.id}</span>
-                  <span className="badge">{detail.chapterCount} chương</span>
+                  <Badge>{detail.chapterCount} chương</Badge>
                   {detail.linkedStorySlug ? (
                     <span className="label">
                       Workspace: <Link href={`/stories/${detail.linkedStorySlug}`}>{detail.linkedStorySlug}</Link>
@@ -133,14 +138,14 @@ export const ContentStoryDetailClient: React.FC<{ id: string }> = ({ id }) => {
                 </div>
               </div>
               {detail.status === 'approved' ? (
-                <button className="button" type="button" onClick={() => void handleImport()} disabled={isImporting}>
+                <Button type="button" onClick={() => void handleImport()} disabled={isImporting}>
                   <FileInput size={16} aria-hidden="true" />
                   {isImporting ? 'Đang nhập...' : 'Nhập vào xử lý'}
-                </button>
+                </Button>
               ) : null}
               {detail.status === 'processing' && detail.linkedStorySlug ? (
-                <button
-                  className="button secondary"
+                <Button
+                  variant="secondary"
                   type="button"
                   onClick={() => void handleResync()}
                   disabled={isResyncing}
@@ -148,7 +153,7 @@ export const ContentStoryDetailClient: React.FC<{ id: string }> = ({ id }) => {
                 >
                   <RefreshCcw size={16} aria-hidden="true" />
                   {isResyncing ? 'Đang nhập lại...' : 'Nhập lại'}
-                </button>
+                </Button>
               ) : null}
             </div>
 
@@ -168,12 +173,12 @@ export const ContentStoryDetailClient: React.FC<{ id: string }> = ({ id }) => {
                 type="button"
                 onClick={() => setActiveTab('chapters')}
               >
-                Chapters <span className="badge">{detail.chapters.length}</span>
+                Chapters <Badge>{detail.chapters.length}</Badge>
               </button>
             </div>
 
             {DOC_TABS.filter((tab) => tab.id === activeTab).map((tab) => (
-              <section className="panel" key={tab.id}>
+              <Card key={tab.id}>
                 {detail.documents[tab.id] ? (
                   <div className="markdown-body">
                     <ReactMarkdown remarkPlugins={[remarkGfm]}>{detail.documents[tab.id]}</ReactMarkdown>
@@ -181,11 +186,11 @@ export const ContentStoryDetailClient: React.FC<{ id: string }> = ({ id }) => {
                 ) : (
                   <p>{tab.emptyLabel}</p>
                 )}
-              </section>
+              </Card>
             ))}
 
             {activeTab === 'chapters' ? (
-              <section className="panel">
+              <Card>
                 {detail.chapters.length === 0 ? (
                   <p>Truyện này chưa có chương nào.</p>
                 ) : (
@@ -205,7 +210,7 @@ export const ContentStoryDetailClient: React.FC<{ id: string }> = ({ id }) => {
                     <div className="log">{detail.chapters[chapterIndex]?.content}</div>
                   </div>
                 )}
-              </section>
+              </Card>
             ) : null}
           </>
         ) : null}

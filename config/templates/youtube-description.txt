@@ -1,6 +1,6 @@
 {{title}}
 
-📻 Bạn đang lắng nghe 666Hz Radio — tần số của những câu chuyện không nên được phát sóng. {{contextHook}}
+📻 Bạn đang lắng nghe 666Hz Radio — tần số của những câu chuyện không nên được phát sóng.
 
 {{storyTitleCaps}}
 

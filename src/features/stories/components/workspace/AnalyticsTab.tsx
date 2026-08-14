@@ -1,5 +1,7 @@
 import React from 'react';
 
+import { Card, CardTitle } from '@/components/ui/card';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { formatLongDuration } from '@/features/stories/utils/format';
 import type { JobType, SegmentRecord, StoryAnalytics } from '@/types/story';
 
@@ -31,7 +33,7 @@ export const AnalyticsTab: React.FC<AnalyticsTabProps> = ({ analytics, segments 
   ).length;
 
   return (
-    <section className="panel form">
+    <Card>
       <div className="page-header">
         <div>
           <h2>Analytics</h2>
@@ -40,78 +42,76 @@ export const AnalyticsTab: React.FC<AnalyticsTabProps> = ({ analytics, segments 
       </div>
 
       <div className="settings-grid">
-        <div className="panel">
+        <Card>
           <div className="label">{analytics.isComplete ? 'Total time (draft → complete)' : 'Elapsed so far'}</div>
-          <h3>{formatLongDuration(analytics.totalDurationMs)}</h3>
+          <CardTitle>{formatLongDuration(analytics.totalDurationMs)}</CardTitle>
           <p>
             Created {formatTimestamp(analytics.createdAt)}
             {analytics.isComplete ? ` · Completed ${formatTimestamp(analytics.finalAudioApprovedAt)}` : ''}
           </p>
-        </div>
-        <div className="panel">
+        </Card>
+        <Card>
           <div className="label">Draft → segments approved</div>
-          <h3>{formatLongDuration(phaseDurationsMs.draftToSegmentsApproved)}</h3>
+          <CardTitle>{formatLongDuration(phaseDurationsMs.draftToSegmentsApproved)}</CardTitle>
           <p>Time spent writing/editing before approving segments for TTS.</p>
-        </div>
-        <div className="panel">
+        </Card>
+        <Card>
           <div className="label">Segments approved → audio verified</div>
-          <h3>{formatLongDuration(phaseDurationsMs.segmentsApprovedToVerified)}</h3>
+          <CardTitle>{formatLongDuration(phaseDurationsMs.segmentsApprovedToVerified)}</CardTitle>
           <p>Includes TTS generation, Whisper verification, and manual review.</p>
-        </div>
-        <div className="panel">
+        </Card>
+        <Card>
           <div className="label">Verified → final audio approved</div>
-          <h3>{formatLongDuration(phaseDurationsMs.verifiedToFinalApproved)}</h3>
+          <CardTitle>{formatLongDuration(phaseDurationsMs.verifiedToFinalApproved)}</CardTitle>
           <p>Time from confirming verified output to approving the concatenated final WAV.</p>
-        </div>
+        </Card>
       </div>
 
       <h3>Job performance</h3>
-      <div className="table-wrap">
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Job</th>
-              <th>Runs</th>
-              <th>Total time</th>
-              <th>Avg per run</th>
-              <th>Last finished</th>
-            </tr>
-          </thead>
-          <tbody>
-            {jobs.map((job) => (
-              <tr key={job.type}>
-                <td>{JOB_LABELS[job.type]}</td>
-                <td className="mono">{job.runs}</td>
-                <td className="mono">{formatLongDuration(job.totalDurationMs)}</td>
-                <td className="mono">{formatLongDuration(job.averageDurationMs)}</td>
-                <td>{formatTimestamp(job.lastFinishedAt)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Job</TableHead>
+            <TableHead>Runs</TableHead>
+            <TableHead>Total time</TableHead>
+            <TableHead>Avg per run</TableHead>
+            <TableHead>Last finished</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {jobs.map((job) => (
+            <TableRow key={job.type}>
+              <TableCell>{JOB_LABELS[job.type]}</TableCell>
+              <TableCell className="mono">{job.runs}</TableCell>
+              <TableCell className="mono">{formatLongDuration(job.totalDurationMs)}</TableCell>
+              <TableCell className="mono">{formatLongDuration(job.averageDurationMs)}</TableCell>
+              <TableCell>{formatTimestamp(job.lastFinishedAt)}</TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
 
       <h3>Segment verification</h3>
       <div className="settings-grid">
-        <div className="panel">
+        <Card>
           <div className="label">Segments</div>
-          <h3>{activeSegments.length}</h3>
-        </div>
-        <div className="panel">
+          <CardTitle>{activeSegments.length}</CardTitle>
+        </Card>
+        <Card>
           <div className="label">Verification attempts (total)</div>
-          <h3>{totalAttempts}</h3>
+          <CardTitle>{totalAttempts}</CardTitle>
           <p>{activeSegments.length > 0 ? (totalAttempts / activeSegments.length).toFixed(1) : '0'} avg per segment</p>
-        </div>
-        <div className="panel">
+        </Card>
+        <Card>
           <div className="label">Passed</div>
-          <h3>{passedCount}</h3>
-        </div>
-        <div className="panel">
+          <CardTitle>{passedCount}</CardTitle>
+        </Card>
+        <Card>
           <div className="label">Failed / max attempts</div>
-          <h3>{failedCount}</h3>
-        </div>
+          <CardTitle>{failedCount}</CardTitle>
+        </Card>
       </div>
-    </section>
+    </Card>
   );
 };
 

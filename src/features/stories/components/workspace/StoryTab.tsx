@@ -1,6 +1,10 @@
 import { FileUp, Save, Wand2 } from 'lucide-react';
 import React, { useRef } from 'react';
 
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { Textarea } from '@/components/ui/textarea';
 import { readStoryFilesAsText } from '@/features/stories/utils/readStoryFiles';
 
 interface StoryTabProps {
@@ -35,34 +39,29 @@ export const StoryTab: React.FC<StoryTabProps> = ({
   };
 
   return (
-    <section className="panel form">
+    <Card className="grid gap-3">
       <div className="page-header">
         <h2>Story Editor</h2>
-        {isDirty ? <span className="badge unsaved">Unsaved changes</span> : null}
+        {isDirty ? <Badge variant="warn">Unsaved changes</Badge> : null}
       </div>
-      <textarea
-        className="textarea large"
+      <Textarea
+        className="min-h-[560px]"
         value={storyText}
         onChange={(event) => onChangeStoryText(event.target.value)}
       />
       <div className="button-row">
-        <button className="button" type="button" onClick={onSaveStory} disabled={isBusy}>
+        <Button type="button" onClick={onSaveStory} disabled={isBusy}>
           <Save size={16} aria-hidden="true" />
           Save draft
-        </button>
-        <button className="button secondary" type="button" onClick={onProcessStory} disabled={!canProcess}>
+        </Button>
+        <Button variant="secondary" type="button" onClick={onProcessStory} disabled={!canProcess}>
           <Wand2 size={16} aria-hidden="true" />
           Process story
-        </button>
-        <button
-          className="button secondary"
-          type="button"
-          onClick={() => fileInputRef.current?.click()}
-          disabled={isBusy}
-        >
+        </Button>
+        <Button variant="secondary" type="button" onClick={() => fileInputRef.current?.click()} disabled={isBusy}>
           <FileUp size={16} aria-hidden="true" />
           Upload markdown
-        </button>
+        </Button>
         <input
           ref={fileInputRef}
           type="file"
@@ -72,7 +71,7 @@ export const StoryTab: React.FC<StoryTabProps> = ({
           onChange={(event) => void handleUploadFiles(event)}
         />
       </div>
-    </section>
+    </Card>
   );
 };
 

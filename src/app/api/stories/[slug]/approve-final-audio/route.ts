@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 
-import { getStoryDetail, setApproval } from '@/lib/json-store';
+import { getStoryDetail, setApproval, syncVideoPlanGainToLibraryDefaults } from '@/lib/json-store';
 
 interface StoryRouteContext {
   params: Promise<{ slug: string }>;
@@ -20,6 +20,10 @@ export async function POST(
     );
   }
 
+  // Approving final audio is the one point where a story's video-plan gain
+  // gets refreshed from the media library's current defaults — but only if
+  // the operator hasn't hand-tuned it for this story already.
+  await syncVideoPlanGainToLibraryDefaults(slug);
   const story = await setApproval(slug, 'finalAudio', 'approved');
   return NextResponse.json({ story });
 }

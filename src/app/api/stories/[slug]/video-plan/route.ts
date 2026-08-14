@@ -64,6 +64,22 @@ export async function PUT(
     introImagePath: current.introImagePath,
   };
 
+  // This route is only ever called from the operator-facing Video tab save
+  // action — internal writes (buildDefaultVideoPlan/randomizeVideoPlan/
+  // syncVideoPlanGainToLibraryDefaults) go through writeVideoPlan() directly.
+  // So an actual change to any gain field here means the operator hand-tuned
+  // it, and approve-final-audio should leave it alone from now on. This only
+  // ever forces the flag ON — an explicit reset (the operator clicking
+  // "Reset to library defaults", which sends gainManuallyEdited: false with
+  // no accompanying gain change) passes through via the spread above.
+  const gainChanged =
+    next.bgMusicGainDb !== current.bgMusicGainDb ||
+    next.rainAmbienceGainDb !== current.rainAmbienceGainDb ||
+    next.introMusicGainDb !== current.introMusicGainDb;
+  if (gainChanged) {
+    next.gainManuallyEdited = true;
+  }
+
   const validationError = await validatePlanIds(next);
   if (validationError) {
     return NextResponse.json({ error: validationError }, { status: 400 });

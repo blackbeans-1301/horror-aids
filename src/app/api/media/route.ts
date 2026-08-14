@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { addMediaAsset, deleteMediaAsset, readMediaLibrary, updateMediaAsset } from '@/lib/json-store';
-import type { MediaCategory } from '@/types/story';
+import type { GradeOverride, MediaCategory } from '@/types/story';
 
 const MEDIA_CATEGORIES = new Set<MediaCategory>(['bg_music', 'rain_ambience', 'intro_music', 'scene_video']);
 
@@ -82,6 +82,7 @@ export async function PATCH(request: Request): Promise<NextResponse> {
     notes?: unknown;
     loopable?: unknown;
     defaultGainDb?: unknown;
+    gradeOverride?: unknown;
   };
 
   if (body.category !== undefined && !MEDIA_CATEGORIES.has(body.category as MediaCategory)) {
@@ -89,6 +90,23 @@ export async function PATCH(request: Request): Promise<NextResponse> {
   }
   if (body.defaultGainDb !== undefined && typeof body.defaultGainDb !== 'number') {
     return NextResponse.json({ error: 'defaultGainDb must be a number' }, { status: 400 });
+  }
+
+  let gradeOverride: GradeOverride | undefined;
+  if (body.gradeOverride !== undefined) {
+    const raw = body.gradeOverride as { brightness?: unknown; vignette?: unknown };
+    const brightnessValid = raw.brightness === null || typeof raw.brightness === 'number';
+    const vignetteValid = raw.vignette === null || typeof raw.vignette === 'boolean';
+    if (!brightnessValid || !vignetteValid) {
+      return NextResponse.json(
+        { error: 'gradeOverride.brightness must be a number or null, gradeOverride.vignette must be a boolean or null' },
+        { status: 400 },
+      );
+    }
+    gradeOverride = {
+      brightness: (raw.brightness ?? null) as number | null,
+      vignette: (raw.vignette ?? null) as boolean | null,
+    };
   }
 
   try {
@@ -99,6 +117,7 @@ export async function PATCH(request: Request): Promise<NextResponse> {
       notes: typeof body.notes === 'string' ? body.notes : undefined,
       loopable: typeof body.loopable === 'boolean' ? body.loopable : undefined,
       defaultGainDb: typeof body.defaultGainDb === 'number' ? body.defaultGainDb : undefined,
+      gradeOverride,
     });
     return NextResponse.json({ media: asset });
   } catch (error) {

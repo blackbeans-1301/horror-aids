@@ -7,6 +7,7 @@ import type {
   StoryIndexEntry,
   StoryRecord,
   VideoPlanFile,
+  YoutubeMetadataFieldGroup,
   YoutubeMetadataFile,
 } from '@/types/story';
 
@@ -158,6 +159,14 @@ export const storiesApi = {
     return data.videoPlan;
   },
 
+  async resetVideoPlanGain(slug: string): Promise<VideoPlanFile> {
+    const data = await requestJson<{ videoPlan: VideoPlanFile }>(
+      `/api/stories/${slug}/video-plan/reset-gain`,
+      { method: 'POST' },
+    );
+    return data.videoPlan;
+  },
+
   async uploadIntroImage(slug: string, file: File): Promise<VideoPlanFile> {
     const form = new FormData();
     form.set('file', file);
@@ -236,10 +245,13 @@ export const storiesApi = {
     return data.metadata;
   },
 
-  async generateYoutubeMetadata(slug: string): Promise<YoutubeMetadataFile> {
+  async generateYoutubeMetadata(
+    slug: string,
+    fields?: YoutubeMetadataFieldGroup[],
+  ): Promise<YoutubeMetadataFile> {
     const data = await requestJson<{ metadata: YoutubeMetadataFile }>(
       `/api/stories/${slug}/metadata/generate`,
-      { method: 'POST' },
+      { method: 'POST', body: fields ? JSON.stringify({ fields }) : undefined },
     );
     return data.metadata;
   },

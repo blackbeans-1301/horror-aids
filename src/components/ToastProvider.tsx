@@ -1,9 +1,9 @@
 'use client';
 
-import { ToastContainer } from 'react-toastify';
+import { Toaster } from '@/components/ui/sonner';
 
-export const ToastProvider: React.FC = () => {
-  return <ToastContainer theme="dark" position="bottom-right" autoClose={4000} newestOnTop />;
-};
+export const ToastProvider: React.FC = () => (
+  <Toaster position="bottom-left" richColors closeButton visibleToasts={3} />
+);
 
 export default ToastProvider;

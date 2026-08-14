@@ -4,23 +4,32 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { configRoot } from '@/lib/paths';
+import type { YoutubeMetadataFieldGroup } from '@/types/story';
 
 export interface YoutubeMetadataFields {
   titles: string[];
-  contextHook: string;
   teaser: string;
   tags: string[];
   category: string;
   thumbnailPrompts: string[];
-  pinnedComment: string;
+  pinnedComment: string[];
   model: string;
 }
+
+export const ALL_YOUTUBE_METADATA_FIELD_GROUPS: YoutubeMetadataFieldGroup[] = [
+  'titles',
+  'teaser',
+  'tagsAndCategory',
+  'thumbnailPrompts',
+  'pinnedComment',
+];
 
 interface YoutubeMetadataAppConfig {
   model?: string;
   titleVariantCount?: number;
   titleMaxChars?: number;
   thumbnailPromptVariantCount?: number;
+  pinnedCommentVariantCount?: number;
   tagsMaxCount?: number;
   tone?: string;
   targetAudience?: string;
@@ -31,6 +40,7 @@ const DEFAULT_CONFIG: Required<YoutubeMetadataAppConfig> = {
   titleVariantCount: 5,
   titleMaxChars: 100,
   thumbnailPromptVariantCount: 2,
+  pinnedCommentVariantCount: 3,
   tagsMaxCount: 30,
   tone:
     'kể chuyện ma Việt Nam, giọng radio đêm khuya, rùng rợn nhưng không giật gân rẻ tiền, ' +
@@ -92,11 +102,98 @@ interface OpenAiChatCompletionResponse {
   choices: Array<{ message: { content: string | null } }>;
 }
 
+interface SchemaProperty {
+  [key: string]: unknown;
+}
+
+function buildFieldGroupSchema(
+  group: YoutubeMetadataFieldGroup,
+  config: Required<YoutubeMetadataAppConfig>,
+): { properties: Record<string, SchemaProperty>; required: string[] } {
+  switch (group) {
+    case 'titles':
+      return {
+        properties: {
+          titles: {
+            type: 'array',
+            items: { type: 'string' },
+            minItems: config.titleVariantCount,
+            maxItems: config.titleVariantCount,
+            description:
+              `${config.titleVariantCount} phương án tiêu đề tiếng Việt khác nhau, mỗi tiêu đề tối đa ` +
+              `${config.titleMaxChars} ký tự. Tự chọn phần mở đầu/prefix phù hợp với nội dung truyện ` +
+              '(vd "Truyện ma đêm khuya", "Truyện ma xứ người", "Truyện kinh dị có thật"...) — không ép theo 1 khuôn cố định.',
+          },
+        },
+        required: ['titles'],
+      };
+    case 'teaser':
+      return {
+        properties: {
+          teaser: {
+            type: 'string',
+            description:
+              'Đoạn giới thiệu truyện bằng tiếng Việt, gồm nhiều câu/đoạn ngắn cách nhau bởi hai dấu xuống ' +
+              'dòng liên tiếp (\\n\\n), tạo không khí rùng rợn và tò mò. TUYỆT ĐỐI không được tiết lộ đoạn ' +
+              'kết hoặc lời giải của bí ẩn trong truyện.',
+          },
+        },
+        required: ['teaser'],
+      };
+    case 'tagsAndCategory':
+      return {
+        properties: {
+          tags: {
+            type: 'array',
+            items: { type: 'string' },
+            maxItems: config.tagsMaxCount,
+            description:
+              'Từ khoá (chủ yếu tiếng Việt, có thể thêm vài từ tiếng Anh phổ biến) cho ô Tags của YouTube Studio.',
+          },
+          category: { type: 'string', enum: [...YOUTUBE_CATEGORIES] },
+        },
+        required: ['tags', 'category'],
+      };
+    case 'thumbnailPrompts':
+      return {
+        properties: {
+          thumbnailPrompts: {
+            type: 'array',
+            items: { type: 'string' },
+            minItems: config.thumbnailPromptVariantCount,
+            maxItems: config.thumbnailPromptVariantCount,
+            description:
+              'Prompt bằng tiếng Anh để dán trực tiếp vào một AI image generator (Midjourney/DALL-E/etc.), ' +
+              'mô tả cảnh, ánh sáng, tâm trạng horror khớp với câu chuyện, tỉ lệ khung hình 16:9, không có chữ trong ảnh.',
+          },
+        },
+        required: ['thumbnailPrompts'],
+      };
+    case 'pinnedComment':
+      return {
+        properties: {
+          pinnedComment: {
+            type: 'array',
+            items: { type: 'string' },
+            minItems: config.pinnedCommentVariantCount,
+            maxItems: config.pinnedCommentVariantCount,
+            description:
+              `${config.pinnedCommentVariantCount} phương án bình luận ghim bằng tiếng Việt — câu hỏi hoặc lời ` +
+              'gợi mở thảo luận liên quan tới nội dung truyện, giữ giọng văn của kênh, mỗi phương án khác nhau, ' +
+              'không theo khuôn cố định nào.',
+          },
+        },
+        required: ['pinnedComment'],
+      };
+  }
+}
+
 export async function generateYoutubeMetadataFields(input: {
   title: string;
   storyText: string;
   videoDurationMs: number | null;
-}): Promise<YoutubeMetadataFields> {
+  fieldGroups: YoutubeMetadataFieldGroup[];
+}): Promise<Partial<YoutubeMetadataFields> & { model: string }> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     throw new Error('OPENAI_API_KEY chưa được cấu hình — thêm vào .env.local trước khi generate metadata.');
@@ -107,56 +204,13 @@ export async function generateYoutubeMetadataFields(input: {
     ? `Video dài khoảng ${Math.round(input.videoDurationMs / 60000)} phút.`
     : '';
 
+  const groups = input.fieldGroups.length > 0 ? input.fieldGroups : ALL_YOUTUBE_METADATA_FIELD_GROUPS;
+  const built = groups.map((group) => buildFieldGroupSchema(group, config));
+
   const schema = {
     type: 'object',
-    properties: {
-      titles: {
-        type: 'array',
-        items: { type: 'string' },
-        minItems: config.titleVariantCount,
-        maxItems: config.titleVariantCount,
-        description:
-          `${config.titleVariantCount} phương án tiêu đề tiếng Việt khác nhau, mỗi tiêu đề tối đa ` +
-          `${config.titleMaxChars} ký tự. Tự chọn phần mở đầu/prefix phù hợp với nội dung truyện ` +
-          '(vd "Truyện ma đêm khuya", "Truyện ma xứ người", "Truyện kinh dị có thật"...) — không ép theo 1 khuôn cố định.',
-      },
-      contextHook: {
-        type: 'string',
-        description:
-          'Đúng 1 câu tiếng Việt, tiếp nối ngay sau câu "Bạn đang lắng nghe 666Hz Radio — tần số của ' +
-          'những câu chuyện không nên được phát sóng.", giới thiệu bối cảnh/xuất xứ của câu chuyện này.',
-      },
-      teaser: {
-        type: 'string',
-        description:
-          'Đoạn giới thiệu truyện bằng tiếng Việt, gồm nhiều câu/đoạn ngắn cách nhau bởi hai dấu xuống ' +
-          'dòng liên tiếp (\\n\\n), tạo không khí rùng rợn và tò mò. TUYỆT ĐỐI không được tiết lộ đoạn ' +
-          'kết hoặc lời giải của bí ẩn trong truyện.',
-      },
-      tags: {
-        type: 'array',
-        items: { type: 'string' },
-        maxItems: config.tagsMaxCount,
-        description: 'Từ khoá (chủ yếu tiếng Việt, có thể thêm vài từ tiếng Anh phổ biến) cho ô Tags của YouTube Studio.',
-      },
-      category: { type: 'string', enum: [...YOUTUBE_CATEGORIES] },
-      thumbnailPrompts: {
-        type: 'array',
-        items: { type: 'string' },
-        minItems: config.thumbnailPromptVariantCount,
-        maxItems: config.thumbnailPromptVariantCount,
-        description:
-          'Prompt bằng tiếng Anh để dán trực tiếp vào một AI image generator (Midjourney/DALL-E/etc.), ' +
-          'mô tả cảnh, ánh sáng, tâm trạng horror khớp với câu chuyện, tỉ lệ khung hình 16:9, không có chữ trong ảnh.',
-      },
-      pinnedComment: {
-        type: 'string',
-        description:
-          'Một bình luận ghim bằng tiếng Việt — câu hỏi hoặc lời gợi mở thảo luận liên quan tới nội dung ' +
-          'truyện, giữ giọng văn của kênh, không theo khuôn cố định nào.',
-      },
-    },
-    required: ['titles', 'contextHook', 'teaser', 'tags', 'category', 'thumbnailPrompts', 'pinnedComment'],
+    properties: Object.assign({}, ...built.map((b) => b.properties)) as Record<string, SchemaProperty>,
+    required: built.flatMap((b) => b.required),
     additionalProperties: false,
   };
 
@@ -197,6 +251,6 @@ export async function generateYoutubeMetadataFields(input: {
     throw new Error('OpenAI trả về response rỗng, không có content.');
   }
 
-  const parsed = JSON.parse(content) as Omit<YoutubeMetadataFields, 'model'>;
+  const parsed = JSON.parse(content) as Partial<Omit<YoutubeMetadataFields, 'model'>>;
   return { ...parsed, model: config.model };
 }

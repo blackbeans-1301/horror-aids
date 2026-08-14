@@ -1,6 +1,9 @@
 import { AudioLines, Check, Play, RefreshCw, Save, Wand2 } from 'lucide-react';
 import React from 'react';
 
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardTitle } from '@/components/ui/card';
 import { formatLongDuration } from '@/features/stories/utils/format';
 import type { ApprovalStatus, JobType } from '@/types/story';
 
@@ -56,83 +59,83 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
   const estimatedGenerateMs = estimatedAudioMs * GENERATE_SECONDS_PER_AUDIO_SECOND;
 
   return (
-    <section className="grid">
-      <div className="panel">
-        <h2>Story stats</h2>
+    <section className="layout-grid">
+      <Card>
+        <CardTitle>Story stats</CardTitle>
         <p>Estimates based on ~{Math.round(WORDS_PER_AUDIO_SECOND * 30)} words per 30s of audio, ~20s generate time per 30s of audio.</p>
         <div className="settings-grid">
-          <div className="panel">
+          <Card>
             <div className="label">Word count</div>
-            <h3>{wordCount.toLocaleString()}</h3>
-          </div>
-          <div className="panel">
+            <CardTitle>{wordCount.toLocaleString()}</CardTitle>
+          </Card>
+          <Card>
             <div className="label">Estimated audio length</div>
-            <h3>{formatLongDuration(estimatedAudioMs)}</h3>
-          </div>
-          <div className="panel">
+            <CardTitle>{formatLongDuration(estimatedAudioMs)}</CardTitle>
+          </Card>
+          <Card>
             <div className="label">Estimated generate time</div>
-            <h3>{formatLongDuration(estimatedGenerateMs)}</h3>
-          </div>
+            <CardTitle>{formatLongDuration(estimatedGenerateMs)}</CardTitle>
+          </Card>
         </div>
-      </div>
-      <div className="panel">
-        <h2>Pipeline</h2>
+      </Card>
+      <Card>
+        <CardTitle>Pipeline</CardTitle>
         <p>Segment approval unlocks TTS. Whisper verification unlocks user validation. User validation unlocks concat.</p>
         <div className="status-line">
-          <span className={storyText.trim() ? 'badge good' : 'badge warn'}>story</span>
-          <span className={hasSegments ? 'badge good' : 'badge warn'}>segments</span>
-          <span className={segmentApproval === 'approved' ? 'badge good' : 'badge warn'}>approved</span>
-          <span className={allVerified ? 'badge good' : 'badge warn'}>verified</span>
-          <span className={verifiedApproval === 'approved' ? 'badge good' : 'badge warn'}>confirmed</span>
-          <span className={finalAudioExists ? 'badge good' : 'badge warn'}>final m4a</span>
+          <Badge variant={storyText.trim() ? 'good' : 'warn'}>story</Badge>
+          <Badge variant={hasSegments ? 'good' : 'warn'}>segments</Badge>
+          <Badge variant={segmentApproval === 'approved' ? 'good' : 'warn'}>approved</Badge>
+          <Badge variant={allVerified ? 'good' : 'warn'}>verified</Badge>
+          <Badge variant={verifiedApproval === 'approved' ? 'good' : 'warn'}>confirmed</Badge>
+          <Badge variant={finalAudioExists ? 'good' : 'warn'}>final m4a</Badge>
         </div>
-      </div>
-      <div className="panel">
-        <h2>Quick Actions</h2>
+      </Card>
+      <Card>
+        <CardTitle>Quick Actions</CardTitle>
         <div className="button-row">
-          <button className="button secondary" type="button" onClick={onSaveStory} disabled={isBusy}>
+          <Button variant="secondary" type="button" onClick={onSaveStory} disabled={isBusy}>
             <Save size={16} aria-hidden="true" />
             Save story
-          </button>
-          <button
-            className="button secondary"
+          </Button>
+          <Button
+            variant="secondary"
             type="button"
             disabled={!canProcess}
             onClick={() => onStartJob('process_story')}
           >
             <Wand2 size={16} aria-hidden="true" />
             Process story
-          </button>
-          <button
-            className="button secondary"
+          </Button>
+          <Button
+            variant="secondary"
             type="button"
             disabled={!canGenerate}
             onClick={() => onStartJob('generate_verify_tts')}
           >
             <AudioLines size={16} aria-hidden="true" />
             Generate + verify
-          </button>
-          <button className="button secondary" type="button" disabled={!canConfirmVerified} onClick={onConfirmVerifiedAudio}>
+          </Button>
+          <Button variant="secondary" type="button" disabled={!canConfirmVerified} onClick={onConfirmVerifiedAudio}>
             <Check size={16} aria-hidden="true" />
             Confirm verified output
-          </button>
-          <button
-            className="button secondary"
+          </Button>
+          <Button
+            variant="secondary"
             type="button"
             disabled={!canConcat}
             onClick={() => onStartJob('concat_audio')}
           >
             <Play size={16} aria-hidden="true" />
             Concat final WAV
-          </button>
+          </Button>
           {sourceContentId ? (
-            <button className="button secondary" type="button" disabled={isBusy} onClick={onSyncFromLibrary}>
+            <Button variant="secondary" type="button" disabled={isBusy} onClick={onSyncFromLibrary}>
               <RefreshCw size={16} aria-hidden="true" />
               Đồng bộ lại từ Thư viện
-            </button>
+            </Button>
           ) : null}
         </div>
-      </div>
+      </Card>
     </section>
   );
 };

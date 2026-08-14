@@ -3,6 +3,7 @@
 import { Clock, Loader2, Square } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
 
+import { Button } from '@/components/ui/button';
 import type { JobRecord, JobType } from '@/types/story';
 
 interface ActiveJobBannerProps {
@@ -57,14 +58,14 @@ export const ActiveJobBanner: React.FC<ActiveJobBannerProps> = ({
           : `running ${formatElapsed(job.startedAt)}`}
       </span>
       {isQueued ? null : (
-        <button className="button secondary" type="button" onClick={onViewLog}>
+        <Button variant="secondary" type="button" onClick={onViewLog}>
           View log
-        </button>
+        </Button>
       )}
-      <button className="button danger" type="button" onClick={onStop} disabled={isStopping}>
+      <Button variant="destructive" type="button" onClick={onStop} disabled={isStopping}>
         <Square size={14} aria-hidden="true" />
         {isStopping ? 'Stopping…' : isQueued ? 'Remove from queue' : 'Stop'}
-      </button>
+      </Button>
     </div>
   );
 };
