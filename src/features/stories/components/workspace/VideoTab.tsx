@@ -349,14 +349,14 @@ export const VideoTab: React.FC<VideoTabProps> = ({
             disabled={isBusy}
           />
         </div>
-        <label className="flex items-center gap-2">
+        <Label className="flex items-center gap-2">
           <Checkbox
             checked={videoPlan.duckingEnabled}
             onCheckedChange={(checked) => onUpdatePlan({ duckingEnabled: checked === true })}
             disabled={isBusy}
           />
-          <span className="text-xs uppercase tracking-wide text-muted-foreground">Duck music under narration</span>
-        </label>
+          Duck music under narration
+        </Label>
       </div>
 
       {videoPlan.gainManuallyEdited ? (

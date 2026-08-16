@@ -159,22 +159,24 @@ export const ContentStoryDetailClient: React.FC<{ id: string }> = ({ id }) => {
 
             <div className="tabs">
               {DOC_TABS.map((tab) => (
-                <button
-                  className={activeTab === tab.id ? 'tab active' : 'tab'}
-                  key={tab.id}
+                <Button
+                  variant="ghost"
                   type="button"
+                  className={activeTab === tab.id ? 'tab active h-auto text-base font-normal' : 'tab h-auto text-base font-normal'}
+                  key={tab.id}
                   onClick={() => setActiveTab(tab.id)}
                 >
                   {tab.label}
-                </button>
+                </Button>
               ))}
-              <button
-                className={activeTab === 'chapters' ? 'tab active' : 'tab'}
+              <Button
+                variant="ghost"
                 type="button"
+                className={activeTab === 'chapters' ? 'tab active h-auto text-base font-normal' : 'tab h-auto text-base font-normal'}
                 onClick={() => setActiveTab('chapters')}
               >
                 Chapters <Badge>{detail.chapters.length}</Badge>
-              </button>
+              </Button>
             </div>
 
             {DOC_TABS.filter((tab) => tab.id === activeTab).map((tab) => (
@@ -197,14 +199,19 @@ export const ContentStoryDetailClient: React.FC<{ id: string }> = ({ id }) => {
                   <div className="chapter-layout">
                     <div className="chapter-list">
                       {detail.chapters.map((chapter, index) => (
-                        <button
-                          className={index === chapterIndex ? 'chapter-list-item active' : 'chapter-list-item'}
+                        <Button
+                          variant="ghost"
+                          className={
+                            index === chapterIndex
+                              ? 'chapter-list-item active h-auto font-normal'
+                              : 'chapter-list-item h-auto font-normal'
+                          }
                           key={chapter.file}
                           type="button"
                           onClick={() => setChapterIndex(index)}
                         >
                           {chapter.title}
-                        </button>
+                        </Button>
                       ))}
                     </div>
                     <div className="log">{detail.chapters[chapterIndex]?.content}</div>

@@ -82,14 +82,14 @@ export const GradeOverrideEditor: React.FC<GradeOverrideEditorProps> = ({
     <div className="grid gap-3">
       <h3>{title}</h3>
       <div className="settings-grid">
-        <label className="flex items-center gap-2">
+        <Label className="flex items-center gap-2">
           <Checkbox
             checked={value.brightness !== null}
             onCheckedChange={(checked) => onChange({ ...value, brightness: checked === true ? 0 : null })}
             disabled={disabled}
           />
-          <span className="text-xs uppercase tracking-wide text-muted-foreground">Override brightness</span>
-        </label>
+          Override brightness
+        </Label>
         <div className="grid gap-1.5">
           <Label>Brightness (-1 đến 1, mặc định global -0.05)</Label>
           <Input

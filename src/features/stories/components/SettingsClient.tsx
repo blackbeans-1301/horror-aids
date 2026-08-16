@@ -13,6 +13,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Slider } from '@/components/ui/slider';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { storiesApi, type VoiceOption } from '@/features/stories/api/storiesApi';
 import { AppShell } from '@/features/stories/components/AppShell';
@@ -339,14 +340,14 @@ export const SettingsClient: React.FC = () => {
                       <Label>
                         MaskGIT steps: {selectedGgufSteps} (default {config.ggufStepsRange.default})
                       </Label>
-                      <input
-                        type="range"
-                        className="accent-primary"
+                      <Slider
                         min={config.ggufStepsRange.min}
                         max={config.ggufStepsRange.max}
                         step={1}
-                        value={selectedGgufSteps}
-                        onChange={(event) => setSelectedGgufSteps(Number(event.target.value))}
+                        value={[selectedGgufSteps]}
+                        onValueChange={(value) =>
+                          setSelectedGgufSteps(value[0] ?? config.ggufStepsRange.min)
+                        }
                         disabled={isBusy}
                       />
                       <p>
@@ -408,14 +409,14 @@ export const SettingsClient: React.FC = () => {
                   transcription pass per batch). Turn it off to accept generated audio immediately and
                   review it by ear instead.
                 </p>
-                <label className="flex items-center gap-2">
+                <Label className="flex items-center gap-2">
                   <Checkbox
                     checked={selectedVerificationEnabled}
                     onCheckedChange={(checked) => setSelectedVerificationEnabled(checked === true)}
                     disabled={isBusy}
                   />
-                  <span className="label">Verify generated audio with Whisper</span>
-                </label>
+                  Verify generated audio with Whisper
+                </Label>
                 <Button
                   type="button"
                   onClick={() => void applyVerificationSetting()}
@@ -441,14 +442,14 @@ export const SettingsClient: React.FC = () => {
                   this off to keep everything as a single narrator — useful if you only ever
                   generate narrator-only audio.
                 </p>
-                <label className="flex items-center gap-2">
+                <Label className="flex items-center gap-2">
                   <Checkbox
                     checked={selectedCharacterSegmentationEnabled}
                     onCheckedChange={(checked) => setSelectedCharacterSegmentationEnabled(checked === true)}
                     disabled={isBusy}
                   />
-                  <span className="label">Split dialogue into character segments</span>
-                </label>
+                  Split dialogue into character segments
+                </Label>
                 <Button
                   type="button"
                   onClick={() => void applySegmentationSetting()}

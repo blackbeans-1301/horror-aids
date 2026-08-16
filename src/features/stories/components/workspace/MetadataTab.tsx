@@ -6,6 +6,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Textarea } from '@/components/ui/textarea';
 import type { YoutubeMetadataFieldGroup, YoutubeMetadataFile } from '@/types/story';
 
@@ -116,29 +118,30 @@ export const MetadataTab: React.FC<MetadataTabProps> = ({
                 onClick={() => onGenerateField('titles')}
               />
             </div>
-            {metadata.titles.map((title, index) => (
-              <label className="field row" key={index}>
-                <input
-                  type="radio"
-                  name="metadata-title"
-                  checked={metadata.selectedTitleIndex === index}
-                  onChange={() => onUpdate({ selectedTitleIndex: index })}
-                  disabled={isBusy}
-                />
-                <Input
-                  type="text"
-                  value={title}
-                  maxLength={100}
-                  onChange={(event) => {
-                    const next = [...metadata.titles];
-                    next[index] = event.target.value;
-                    onUpdate({ titles: next });
-                  }}
-                  disabled={isBusy}
-                />
-                <CopyButton label={`title #${index + 1}`} value={title} />
-              </label>
-            ))}
+            <RadioGroup
+              name="metadata-title"
+              value={String(metadata.selectedTitleIndex)}
+              onValueChange={(value) => onUpdate({ selectedTitleIndex: Number(value) })}
+              disabled={isBusy}
+            >
+              {metadata.titles.map((title, index) => (
+                <div className="field row" key={index}>
+                  <RadioGroupItem value={String(index)} id={`metadata-title-${index}`} />
+                  <Input
+                    type="text"
+                    value={title}
+                    maxLength={100}
+                    onChange={(event) => {
+                      const next = [...metadata.titles];
+                      next[index] = event.target.value;
+                      onUpdate({ titles: next });
+                    }}
+                    disabled={isBusy}
+                  />
+                  <CopyButton label={`title #${index + 1}`} value={title} />
+                </div>
+              ))}
+            </RadioGroup>
           </Card>
 
           <Card>
@@ -150,19 +153,22 @@ export const MetadataTab: React.FC<MetadataTabProps> = ({
                 onClick={() => onGenerateField('teaser')}
               />
             </div>
-            <label className="field">
-              <span className="label">Teaser (không spoil kết truyện)</span>
+            <div className="field">
+              <Label htmlFor="metadata-teaser">Teaser (không spoil kết truyện)</Label>
               <Textarea
+                id="metadata-teaser"
                 rows={8}
                 value={metadata.teaser}
                 onChange={(event) => onUpdate({ teaser: event.target.value })}
                 disabled={isBusy}
               />
-            </label>
-            <label className="field">
-              <span className="label">Description đầy đủ (đã ghép template — copy cái này khi đăng)</span>
-              <Textarea rows={14} value={metadata.renderedDescription} readOnly />
-            </label>
+            </div>
+            <div className="field">
+              <Label htmlFor="metadata-description">
+                Description đầy đủ (đã ghép template — copy cái này khi đăng)
+              </Label>
+              <Textarea id="metadata-description" rows={14} value={metadata.renderedDescription} readOnly />
+            </div>
             <div className="button-row">
               <CopyButton label="description" value={metadata.renderedDescription} />
             </div>
@@ -177,9 +183,10 @@ export const MetadataTab: React.FC<MetadataTabProps> = ({
                 onClick={() => onGenerateField('tagsAndCategory')}
               />
             </div>
-            <label className="field">
-              <span className="label">Tags (phân cách bởi dấu phẩy)</span>
+            <div className="field">
+              <Label htmlFor="metadata-tags">Tags (phân cách bởi dấu phẩy)</Label>
               <Textarea
+                id="metadata-tags"
                 rows={3}
                 value={metadata.tags.join(', ')}
                 onChange={(event) =>
@@ -192,19 +199,20 @@ export const MetadataTab: React.FC<MetadataTabProps> = ({
                 }
                 disabled={isBusy}
               />
-            </label>
+            </div>
             <div className="button-row">
               <CopyButton label="tags" value={metadata.tags.join(', ')} />
             </div>
-            <label className="field">
-              <span className="label">Category</span>
+            <div className="field">
+              <Label htmlFor="metadata-category">Category</Label>
               <Input
+                id="metadata-category"
                 type="text"
                 value={metadata.category}
                 onChange={(event) => onUpdate({ category: event.target.value })}
                 disabled={isBusy}
               />
-            </label>
+            </div>
           </Card>
 
           <Card>
@@ -217,9 +225,12 @@ export const MetadataTab: React.FC<MetadataTabProps> = ({
               />
             </div>
             {metadata.thumbnailPrompts.map((prompt, index) => (
-              <label className="field" key={index}>
-                <span className="label">Prompt #{index + 1} (tiếng Anh, dán vào Midjourney/DALL-E/etc.)</span>
+              <div className="field" key={index}>
+                <Label htmlFor={`metadata-thumbnail-prompt-${index}`}>
+                  Prompt #{index + 1} (tiếng Anh, dán vào Midjourney/DALL-E/etc.)
+                </Label>
                 <Textarea
+                  id={`metadata-thumbnail-prompt-${index}`}
                   rows={4}
                   value={prompt}
                   onChange={(event) => {
@@ -232,7 +243,7 @@ export const MetadataTab: React.FC<MetadataTabProps> = ({
                 <div className="button-row">
                   <CopyButton label={`thumbnail prompt #${index + 1}`} value={prompt} />
                 </div>
-              </label>
+              </div>
             ))}
           </Card>
 
@@ -245,28 +256,29 @@ export const MetadataTab: React.FC<MetadataTabProps> = ({
                 onClick={() => onGenerateField('pinnedComment')}
               />
             </div>
-            {metadata.pinnedComment.map((comment, index) => (
-              <label className="field row" key={index}>
-                <input
-                  type="radio"
-                  name="metadata-pinned-comment"
-                  checked={metadata.selectedPinnedCommentIndex === index}
-                  onChange={() => onUpdate({ selectedPinnedCommentIndex: index })}
-                  disabled={isBusy}
-                />
-                <Textarea
-                  rows={2}
-                  value={comment}
-                  onChange={(event) => {
-                    const next = [...metadata.pinnedComment];
-                    next[index] = event.target.value;
-                    onUpdate({ pinnedComment: next });
-                  }}
-                  disabled={isBusy}
-                />
-                <CopyButton label={`pinned comment #${index + 1}`} value={comment} />
-              </label>
-            ))}
+            <RadioGroup
+              name="metadata-pinned-comment"
+              value={String(metadata.selectedPinnedCommentIndex)}
+              onValueChange={(value) => onUpdate({ selectedPinnedCommentIndex: Number(value) })}
+              disabled={isBusy}
+            >
+              {metadata.pinnedComment.map((comment, index) => (
+                <div className="field row" key={index}>
+                  <RadioGroupItem value={String(index)} id={`metadata-pinned-comment-${index}`} />
+                  <Textarea
+                    rows={2}
+                    value={comment}
+                    onChange={(event) => {
+                      const next = [...metadata.pinnedComment];
+                      next[index] = event.target.value;
+                      onUpdate({ pinnedComment: next });
+                    }}
+                    disabled={isBusy}
+                  />
+                  <CopyButton label={`pinned comment #${index + 1}`} value={comment} />
+                </div>
+              ))}
+            </RadioGroup>
           </Card>
 
           <div className="button-row">

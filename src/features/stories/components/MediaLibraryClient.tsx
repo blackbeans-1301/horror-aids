@@ -106,12 +106,10 @@ const AddMediaModal: React.FC<AddMediaModalProps> = ({ onClose, onAdded }) => {
               disabled={isBusy}
             />
           </div>
-          <label className="flex items-center gap-2">
+          <Label className="flex items-center gap-2">
             <Checkbox checked={loopable} onCheckedChange={(checked) => setLoopable(checked === true)} disabled={isBusy} />
-            <span className="text-xs uppercase tracking-wide text-muted-foreground">
-              Loops cleanly (last frame/sample matches the first)
-            </span>
-          </label>
+            Loops cleanly (last frame/sample matches the first)
+          </Label>
           <div className="grid gap-1.5">
             <Label>File (tải lên qua trình duyệt)</Label>
             <Input type="file" accept="audio/*,video/*" ref={fileInputRef} disabled={isBusy || Boolean(sourcePath.trim())} />
@@ -281,12 +279,10 @@ const EditMediaModal: React.FC<EditMediaModalProps> = ({ asset, onClose, onSaved
               disabled={isBusy}
             />
           ) : null}
-          <label className="flex items-center gap-2">
+          <Label className="flex items-center gap-2">
             <Checkbox checked={loopable} onCheckedChange={(checked) => setLoopable(checked === true)} disabled={isBusy} />
-            <span className="text-xs uppercase tracking-wide text-muted-foreground">
-              Loops cleanly (last frame/sample matches the first)
-            </span>
-          </label>
+            Loops cleanly (last frame/sample matches the first)
+          </Label>
           <div className="grid gap-1.5">
             <Label>Source</Label>
             <Input value={source} onChange={(event) => setSource(event.target.value)} disabled={isBusy} />

@@ -64,7 +64,7 @@
     "defaultGainDb": { "introMusic": -3, "bgMusic": -22, "rainAmbience": -26 }
   },
   "youtubeMetadata": {
-    "model": "gpt-5.6-sol",
+    "model": "gpt-5.6-luna",
     "titleVariantCount": 5,
     "titleMaxChars": 100,
     "thumbnailPromptVariantCount": 2,

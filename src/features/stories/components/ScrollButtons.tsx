@@ -3,6 +3,8 @@
 import { ChevronsDown, ChevronsUp } from 'lucide-react';
 import React, { useCallback, useEffect, useState } from 'react';
 
+import { Button } from '@/components/ui/button';
+
 function getScrollState(): { atTop: boolean; atBottom: boolean; hasScroll: boolean } {
   const scrollY = window.scrollY;
   const viewport = window.innerHeight;
@@ -41,7 +43,9 @@ export const ScrollButtons: React.FC = () => {
 
   return (
     <div className="scroll-fabs">
-      <button
+      <Button
+        variant="secondary"
+        size="icon"
         className="scroll-fab"
         type="button"
         title="Lên đầu trang"
@@ -49,8 +53,10 @@ export const ScrollButtons: React.FC = () => {
         onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
       >
         <ChevronsUp size={20} aria-hidden="true" />
-      </button>
-      <button
+      </Button>
+      <Button
+        variant="secondary"
+        size="icon"
         className="scroll-fab"
         type="button"
         title="Xuống cuối trang"
@@ -60,7 +66,7 @@ export const ScrollButtons: React.FC = () => {
         }
       >
         <ChevronsDown size={20} aria-hidden="true" />
-      </button>
+      </Button>
     </div>
   );
 };

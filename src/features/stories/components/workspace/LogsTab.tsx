@@ -1,6 +1,7 @@
 import React from 'react';
 
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardTitle } from '@/components/ui/card';
 import type { JobRecord } from '@/types/story';
 
@@ -19,13 +20,19 @@ export const LogsTab: React.FC<LogsTabProps> = ({ jobs, selectedJob, jobLog, onS
         <CardContent>
           <div className="story-list">
             {jobs.map((job) => (
-              <button className="story-item" key={job.id} type="button" onClick={() => onSelectJob(job.id)}>
+              <Button
+                variant="ghost"
+                className="story-item h-auto w-full text-base font-normal"
+                key={job.id}
+                type="button"
+                onClick={() => onSelectJob(job.id)}
+              >
                 <span className="status-line">
                   <strong>{job.type}</strong>
                   <Badge>{job.status}</Badge>
                 </span>
                 <span className="mono">{job.id}</span>
-              </button>
+              </Button>
             ))}
           </div>
         </CardContent>
