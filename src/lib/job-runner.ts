@@ -427,6 +427,7 @@ export async function startStoryJob(
       pid: null,
       startedAt: new Date().toISOString(),
       finishedAt: null,
+      confirmedAt: null,
       logPath: `stories/${storyId}/logs/${jobId}.log`,
       resultPath: `stories/${storyId}/tmp/${jobId}.result.json`,
       command,

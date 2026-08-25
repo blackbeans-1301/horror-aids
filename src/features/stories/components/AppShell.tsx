@@ -2,7 +2,10 @@ import Link from 'next/link';
 import { AudioLines, BookOpen, Clapperboard, Settings } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { JobsSidebar } from '@/features/stories/components/JobsSidebar';
 import { ScrollButtons } from '@/features/stories/components/ScrollButtons';
+import { ShellBody } from '@/features/stories/components/ShellBody';
+import { JobsSidebarProvider } from '@/features/stories/hooks/useJobsSidebarState';
 
 interface AppShellProps {
   children: React.ReactNode;
@@ -39,7 +42,10 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
           </Button>
         </nav>
       </header>
-      {children}
+      <JobsSidebarProvider>
+        <ShellBody>{children}</ShellBody>
+        <JobsSidebar />
+      </JobsSidebarProvider>
       <ScrollButtons />
     </div>
   );

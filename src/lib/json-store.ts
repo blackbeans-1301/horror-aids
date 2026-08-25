@@ -7,6 +7,7 @@ import path from 'node:path';
 
 import { probeIntegratedLufs, probeMediaMetadata } from '@/lib/media-probe';
 import { ALL_YOUTUBE_METADATA_FIELD_GROUPS, generateYoutubeMetadataFields } from '@/lib/openai-metadata';
+import { stripHighlightText } from '@/lib/thumbnail-prompt';
 import { normalizeStoryText } from '@/lib/text-normalize';
 import { renderYoutubeDescription, slugifyForHashtag } from '@/lib/youtube-description';
 import {
@@ -76,12 +77,12 @@ const DEFAULT_VIDEO_CONFIG: Required<Omit<VideoAppConfig, 'defaultGainDb' | 'gra
   defaultGainDb: Required<NonNullable<VideoAppConfig['defaultGainDb']>>;
   grade: Required<NonNullable<VideoAppConfig['grade']>>;
 } = {
-  introDurationMs: 10000,
+  introDurationMs: 8000,
   leadInMs: 800,
   tailOutMs: 4000,
   transitionMs: 1000,
   defaultGainDb: { introMusic: -3, bgMusic: -22, rainAmbience: -26 },
-  grade: { brightness: -0.05, saturation: 0.85, vignette: true },
+  grade: { brightness: -0.05, saturation: 0.85, vignette: false },
 };
 
 export async function readVideoAppConfig(): Promise<typeof DEFAULT_VIDEO_CONFIG> {
@@ -179,7 +180,21 @@ async function atomicWrite(filePath: string, content: string | Buffer): Promise<
   await ensureDir(path.dirname(filePath));
   const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
   await fs.writeFile(tmpPath, content);
-  await fs.rename(tmpPath, filePath);
+  try {
+    await fs.rename(tmpPath, filePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      // tmpPath lives in the same directory as filePath, so this only
+      // happens when that directory was removed concurrently (e.g. a story
+      // getting deleted mid-write via deleteStoryPermanently). The write is
+      // moot at that point — there's nothing left on disk to update — so
+      // drop it instead of surfacing an unhandled rejection.
+      await fs.unlink(tmpPath).catch(() => {});
+      console.warn(`atomicWrite: destination directory disappeared before rename could complete: ${filePath}`);
+      return;
+    }
+    throw error;
+  }
 }
 
 // Ingests a file already on this machine without reading it through the
@@ -205,7 +220,16 @@ async function copyLocalFile(sourcePath: string, destPath: string): Promise<void
   await ensureDir(path.dirname(destPath));
   const tmpPath = `${destPath}.${process.pid}.${Date.now()}.tmp`;
   await fs.copyFile(sourcePath, tmpPath, fsConstants.COPYFILE_FICLONE);
-  await fs.rename(tmpPath, destPath);
+  try {
+    await fs.rename(tmpPath, destPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      await fs.unlink(tmpPath).catch(() => {});
+      console.warn(`copyLocalFile: destination directory disappeared before rename could complete: ${destPath}`);
+      return;
+    }
+    throw error;
+  }
 }
 
 export async function writeJsonFile<T>(filePath: string, data: T): Promise<void> {
@@ -365,12 +389,30 @@ export function withJobsLock<T>(operation: () => Promise<T>): Promise<T> {
 
 export async function updateJob(
   jobId: string,
-  patch: Partial<Pick<JobRecord, 'status' | 'pid' | 'startedAt' | 'finishedAt' | 'error'>>,
+  patch: Partial<Pick<JobRecord, 'status' | 'pid' | 'startedAt' | 'finishedAt' | 'error' | 'confirmedAt'>>,
 ): Promise<void> {
   await withJobsLock(async () => {
     const jobs = await readJobs();
     const updatedJobs = jobs.jobs.map((job) =>
       job.id === jobId ? { ...job, ...patch } : job,
+    );
+    await writeJobs({ jobs: updatedJobs });
+  });
+}
+
+// Confirming a finished job dismisses it from the sidebar's unread backlog —
+// persisted server-side (not localStorage) so it survives a redeploy/restart
+// and is shared across whichever browser/device the operator uses.
+export async function confirmJob(jobId: string): Promise<void> {
+  await updateJob(jobId, { confirmedAt: new Date().toISOString() });
+}
+
+export async function confirmAllFinishedJobs(): Promise<void> {
+  await withJobsLock(async () => {
+    const jobs = await readJobs();
+    const now = new Date().toISOString();
+    const updatedJobs = jobs.jobs.map((job) =>
+      job.finishedAt !== null && !job.confirmedAt ? { ...job, confirmedAt: now } : job,
     );
     await writeJobs({ jobs: updatedJobs });
   });
@@ -458,7 +500,7 @@ export async function createStory(input: {
         id: 'narrator',
         name: 'Narrator',
         role: 'narrator',
-        voice: '',
+        voice: 'male-1',
       },
     ],
   });
@@ -1365,9 +1407,7 @@ export async function deleteVideoRender(slug: string, jobId: string): Promise<vo
   if (!receipt) {
     return;
   }
-  if (story.video.finalPath === receipt.outputPath) {
-    throw new Error('Cannot delete the currently selected render — select a different version first');
-  }
+  const isCurrent = story.video.finalPath === receipt.outputPath;
 
   await fs.unlink(resolveStoryPath(slug, receipt.outputPath)).catch((error) => {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
@@ -1375,6 +1415,59 @@ export async function deleteVideoRender(slug: string, jobId: string): Promise<vo
     }
   });
   await fs.unlink(receiptPath).catch(() => undefined);
+
+  if (isCurrent) {
+    // Deleting the render the story currently points at (approved or not) —
+    // clear the pointer and reset approval, same as switching to a
+    // different render via selectVideoRender, so the story never references
+    // a final video file that no longer exists.
+    await patchStory(slug, (current) => ({
+      ...current,
+      video: {
+        ...current.video,
+        finalPath: 'video/final.mp4',
+        status: 'pending',
+        durationMs: null,
+        renderedAt: null,
+      },
+      approvals: {
+        ...current.approvals,
+        finalVideo: { status: 'pending', approvedAt: null },
+      },
+    }));
+  }
+}
+
+// --- Trash cleanup — once a story's final video is approved AND the
+// operator archives it, nothing else generated for this story will ever be
+// used again: older video renders (render_video.py never overwrites, so
+// they pile up) and segment audio takes that got swapped out via
+// select-take. Only called from the archive PATCH route, and only when both
+// conditions hold — see that route for the gating.
+export async function cleanupStoryTrash(slug: string): Promise<void> {
+  const renders = await listVideoRenders(slug);
+  await Promise.all(
+    renders.filter((render) => !render.isCurrent).map((render) => deleteVideoRender(slug, render.jobId)),
+  );
+
+  const { segments } = await readSegments(slug);
+  if (!segments.some((segment) => segment.previousTake)) {
+    return;
+  }
+  const cleaned = await Promise.all(
+    segments.map(async (segment) => {
+      if (!segment.previousTake) {
+        return segment;
+      }
+      await fs.unlink(resolveStoryPath(slug, segment.previousTake.path)).catch((error) => {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+          throw error;
+        }
+      });
+      return { ...segment, previousTake: null };
+    }),
+  );
+  await writeSegments(slug, { segments: cleaned });
 }
 
 // --- YouTube upload metadata — a lightweight (non-job) OpenAI structured-
@@ -1504,7 +1597,10 @@ export async function generateYoutubeMetadata(
   if (fields.teaser !== undefined) merged.teaser = fields.teaser;
   if (fields.tags) merged.tags = fields.tags;
   if (fields.category !== undefined) merged.category = fields.category;
-  if (fields.thumbnailPrompts) merged.thumbnailPrompts = fields.thumbnailPrompts;
+  // The highlight sentence is composed from the live selected title at copy
+  // time, so only the prompt body is persisted — drop the line if the model
+  // wrote one anyway.
+  if (fields.thumbnailPrompts) merged.thumbnailPrompts = fields.thumbnailPrompts.map(stripHighlightText);
   if (fields.pinnedComment) {
     merged.pinnedComment = fields.pinnedComment;
     merged.selectedPinnedCommentIndex = 0;
@@ -1564,6 +1660,9 @@ export async function updateYoutubeMetadata(
 ): Promise<YoutubeMetadataFile> {
   const current = await readYoutubeMetadataOrDefault(slug);
   const merged = { ...current, ...patch };
+  if (patch.thumbnailPrompts) {
+    merged.thumbnailPrompts = patch.thumbnailPrompts.map(stripHighlightText);
+  }
   const { storyHashtag, renderedDescription } = await rerenderDescription(slug, {
     titles: merged.titles,
     selectedTitleIndex: merged.selectedTitleIndex,

@@ -12,7 +12,7 @@ import {
   Users,
   Youtube,
 } from 'lucide-react';
-import React from 'react';
+import React, { useEffect } from 'react';
 
 import { useConfirm } from '@/components/ConfirmDialog';
 import { Badge } from '@/components/ui/badge';
@@ -91,7 +91,6 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
     canConcat,
     canRenderVideo,
     canGenerateMetadata,
-    canApproveMetadata,
     startJob,
     stopJob,
     saveStory,
@@ -107,14 +106,13 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
     resetVideoPlanGain,
     uploadIntroImage,
     deleteIntroImage,
+    revealIntroImage,
     approveFinalVideo,
     revealFinalVideo,
     selectVideoRender,
     deleteVideoRender,
     updateYoutubeMetadata,
-    saveYoutubeMetadata,
     generateYoutubeMetadata,
-    approveYoutubeMetadata,
     syncFromLibrary,
     loadJobLog,
     updateCharacter,
@@ -129,6 +127,16 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
     toggleSegmentFlag,
     selectSegmentTake,
   } = workspace;
+
+  // Land on a specific tab when opened from the job queue sidebar's "View" —
+  // e.g. /stories/<slug>?tab=video after a render_video job finishes.
+  useEffect(() => {
+    const requested = new URLSearchParams(window.location.search).get('tab');
+    if (requested && tabs.some((tab) => tab.id === requested)) {
+      setActiveTab(requested as TabId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Save/Process/Generate are already gated server-side for archived
   // stories; fold the same guard into the shared busy flag so the buttons
@@ -209,6 +217,30 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
     await syncFromLibrary();
   };
 
+  // Deleting the render currently pointed at (approved or not) clears the
+  // story's final video selection and resets the finalVideo approval — same
+  // danger-confirm shape as the other actions above that discard approved
+  // progress.
+  const handleDeleteRender = async (jobId: string): Promise<void> => {
+    const render = videoRenders.find((entry) => entry.jobId === jobId);
+    if (render?.isCurrent) {
+      const confirmed = await confirm({
+        title: 'Xoá bản render đang dùng?',
+        description: render.isApproved
+          ? 'Bản render này đã được duyệt. Xoá sẽ bỏ chọn video hiện tại và reset trạng thái duyệt ' +
+            'video cuối về pending. Không thể hoàn tác.'
+          : 'Đây là bản render đang được chọn làm video cuối. Xoá sẽ bỏ chọn video hiện tại. ' +
+            'Không thể hoàn tác.',
+        confirmLabel: 'Xoá bản render',
+        danger: true,
+      });
+      if (!confirmed) {
+        return;
+      }
+    }
+    await deleteVideoRender(jobId);
+  };
+
   return (
     <AppShell>
       <main className="page">
@@ -222,7 +254,6 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
               <Badge variant={allVerified ? 'good' : 'warn'}>verified {allVerified ? 'passed' : 'pending'}</Badge>
               <Badge>final audio {detail?.story.approvals.finalAudio.status ?? 'pending'}</Badge>
               <Badge>final video {detail?.story.approvals.finalVideo.status ?? 'pending'}</Badge>
-              <Badge>metadata {detail?.story.approvals.metadata.status ?? 'pending'}</Badge>
             </p>
           </div>
           <div className="button-row">
@@ -378,11 +409,12 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
             onResetGain={() => void resetVideoPlanGain()}
             onUploadIntroImage={(file) => void uploadIntroImage(file)}
             onDeleteIntroImage={() => void deleteIntroImage()}
+            onRevealIntroImage={() => void revealIntroImage()}
             onStartRender={() => void handleStartJob('render_video')}
             onApproveFinalVideo={() => void approveFinalVideo()}
             onRevealFinalVideo={() => void revealFinalVideo()}
             onSelectRender={(jobId) => void selectVideoRender(jobId)}
-            onDeleteRender={(jobId) => void deleteVideoRender(jobId)}
+            onDeleteRender={(jobId) => void handleDeleteRender(jobId)}
           />
         ) : null}
 
@@ -392,13 +424,9 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
             isDirty={dirty.youtubeMetadata}
             isBusy={effectiveBusy}
             canGenerate={canGenerateMetadata}
-            canApprove={canApproveMetadata}
-            metadataApprovalStatus={detail?.story.approvals.metadata.status ?? 'pending'}
             onUpdate={updateYoutubeMetadata}
-            onSave={() => void saveYoutubeMetadata()}
             onGenerate={() => void generateYoutubeMetadata()}
             onGenerateField={(field) => void generateYoutubeMetadata([field])}
-            onApprove={() => void approveYoutubeMetadata()}
           />
         ) : null}
 

@@ -17,8 +17,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { NumberInput } from '@/components/ui/number-input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { mediaApi } from '@/features/stories/api/mediaApi';
@@ -44,6 +44,7 @@ interface VideoTabProps {
   onResetGain: () => void;
   onUploadIntroImage: (file: File) => void;
   onDeleteIntroImage: () => void;
+  onRevealIntroImage: () => void;
   onStartRender: () => void;
   onApproveFinalVideo: () => void;
   onRevealFinalVideo: () => void;
@@ -136,6 +137,7 @@ export const VideoTab: React.FC<VideoTabProps> = ({
   onResetGain,
   onUploadIntroImage,
   onDeleteIntroImage,
+  onRevealIntroImage,
   onStartRender,
   onApproveFinalVideo,
   onRevealFinalVideo,
@@ -200,6 +202,16 @@ export const VideoTab: React.FC<VideoTabProps> = ({
               <Button variant="secondary" type="button" onClick={() => fileInputRef.current?.click()} disabled={isBusy}>
                 <ImageIcon size={16} aria-hidden="true" />
                 Replace
+              </Button>
+              <Button
+                variant="secondary"
+                type="button"
+                title="Reveal the intro image file in Finder"
+                onClick={onRevealIntroImage}
+                disabled={isBusy}
+              >
+                <FolderOpen size={16} aria-hidden="true" />
+                Reveal in Finder
               </Button>
               <Button variant="destructive" type="button" onClick={onDeleteIntroImage} disabled={isBusy}>
                 <Trash2 size={16} aria-hidden="true" />
@@ -285,67 +297,61 @@ export const VideoTab: React.FC<VideoTabProps> = ({
       <div className="settings-grid">
         <div className="grid gap-1.5">
           <Label>Intro duration (ms)</Label>
-          <Input
-            type="number"
+          <NumberInput
             min={3000}
             max={30000}
             step={500}
             value={videoPlan.introDurationMs}
-            onChange={(event) => onUpdatePlan({ introDurationMs: Number(event.target.value) })}
+            onChange={(next) => onUpdatePlan({ introDurationMs: next })}
             disabled={isBusy}
           />
         </div>
         <div className="grid gap-1.5">
           <Label>Lead-in before narration (ms)</Label>
-          <Input
-            type="number"
+          <NumberInput
             min={0}
             max={10000}
             step={100}
             value={videoPlan.leadInMs}
-            onChange={(event) => onUpdatePlan({ leadInMs: Number(event.target.value) })}
+            onChange={(next) => onUpdatePlan({ leadInMs: next })}
             disabled={isBusy}
           />
         </div>
         <div className="grid gap-1.5">
           <Label>Tail-out after narration (ms)</Label>
-          <Input
-            type="number"
+          <NumberInput
             min={0}
             max={30000}
             step={500}
             value={videoPlan.tailOutMs}
-            onChange={(event) => onUpdatePlan({ tailOutMs: Number(event.target.value) })}
+            onChange={(next) => onUpdatePlan({ tailOutMs: next })}
             disabled={isBusy}
           />
         </div>
         <div className="grid gap-1.5">
           <Label>Bg music gain (dB)</Label>
-          <Input
-            type="number"
+          <NumberInput
             step={1}
             value={videoPlan.bgMusicGainDb}
-            onChange={(event) => onUpdatePlan({ bgMusicGainDb: Number(event.target.value) })}
+            onChange={(next) => onUpdatePlan({ bgMusicGainDb: next })}
             disabled={isBusy}
           />
         </div>
         <div className="grid gap-1.5">
           <Label>Rain gain (dB)</Label>
-          <Input
-            type="number"
+          <NumberInput
             step={1}
             value={videoPlan.rainAmbienceGainDb}
-            onChange={(event) => onUpdatePlan({ rainAmbienceGainDb: Number(event.target.value) })}
+            onChange={(next) => onUpdatePlan({ rainAmbienceGainDb: next })}
             disabled={isBusy}
           />
         </div>
         <div className="grid gap-1.5">
           <Label>Intro music gain (dB)</Label>
-          <Input
-            type="number"
+          <NumberInput
             step={1}
             value={videoPlan.introMusicGainDb}
-            onChange={(event) => onUpdatePlan({ introMusicGainDb: Number(event.target.value) })}
+            onChange={(next) => onUpdatePlan({ introMusicGainDb: next })}
             disabled={isBusy}
           />
         </div>
@@ -461,8 +467,14 @@ export const VideoTab: React.FC<VideoTabProps> = ({
                       <Button
                         variant="destructive"
                         type="button"
-                        disabled={isBusy || render.isCurrent}
-                        title={render.isCurrent ? 'Không thể xoá bản đang dùng' : 'Xoá bản render này'}
+                        disabled={isBusy}
+                        title={
+                          render.isApproved
+                            ? 'Xoá bản đã duyệt (sẽ bỏ duyệt và cần chọn/dựng lại video)'
+                            : render.isCurrent
+                              ? 'Xoá bản đang dùng (sẽ bỏ chọn video hiện tại)'
+                              : 'Xoá bản render này'
+                        }
                         onClick={() => onDeleteRender(render.jobId)}
                       >
                         <Trash2 size={15} aria-hidden="true" />

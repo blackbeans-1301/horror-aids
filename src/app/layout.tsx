@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { Fraunces, Inter } from 'next/font/google';
 import './globals.css';
 
+import { ChunkErrorReload } from '@/components/ChunkErrorReload';
 import { ConfirmProvider } from '@/components/ConfirmDialog';
 import { ToastProvider } from '@/components/ToastProvider';
 
@@ -26,6 +27,7 @@ export default function RootLayout({ children }: RootLayoutProps): React.ReactEl
   return (
     <html lang="en">
       <body className={`${inter.variable} ${fraunces.variable}`}>
+        <ChunkErrorReload />
         <ConfirmProvider>{children}</ConfirmProvider>
         <ToastProvider />
       </body>

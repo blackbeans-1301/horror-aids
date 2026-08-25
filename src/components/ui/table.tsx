@@ -22,15 +22,18 @@ function TableBody({ className, ...props }: React.ComponentProps<'tbody'>): Reac
   return <tbody data-slot="table-body" className={cn(className)} {...props} />;
 }
 
-function TableRow({ className, ...props }: React.ComponentProps<'tr'>): React.ReactElement {
-  return (
-    <tr
-      data-slot="table-row"
-      className={cn('transition-colors hover:bg-accent', className)}
-      {...props}
-    />
-  );
-}
+const TableRow = React.forwardRef<HTMLTableRowElement, React.ComponentProps<'tr'>>(
+  function TableRow({ className, ...props }, ref): React.ReactElement {
+    return (
+      <tr
+        ref={ref}
+        data-slot="table-row"
+        className={cn('transition-colors hover:bg-accent', className)}
+        {...props}
+      />
+    );
+  },
+);
 
 function TableHead({ className, ...props }: React.ComponentProps<'th'>): React.ReactElement {
   return (

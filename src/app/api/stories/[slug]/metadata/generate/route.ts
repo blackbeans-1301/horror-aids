@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 
-import { generateYoutubeMetadata, readStory } from '@/lib/json-store';
+import { generateYoutubeMetadata } from '@/lib/json-store';
 import { ALL_YOUTUBE_METADATA_FIELD_GROUPS } from '@/lib/openai-metadata';
 import type { YoutubeMetadataFieldGroup } from '@/types/story';
 
@@ -13,14 +13,6 @@ export async function POST(
   context: StoryRouteContext,
 ): Promise<NextResponse> {
   const { slug } = await context.params;
-  const story = await readStory(slug);
-
-  if (story.approvals.verifiedAudio.status !== 'approved') {
-    return NextResponse.json(
-      { error: 'Verified audio must be approved before generating YouTube metadata' },
-      { status: 400 },
-    );
-  }
 
   const body = (await request.json().catch(() => null)) as { fields?: YoutubeMetadataFieldGroup[] } | null;
   const requested = (body?.fields ?? []).filter((field): field is YoutubeMetadataFieldGroup =>

@@ -27,6 +27,12 @@ const DASHBOARD_TABS: Array<{ id: DashboardTab; label: string; icon: React.React
   { id: 'archived', label: 'Archived', icon: <Archive size={14} aria-hidden="true" /> },
 ];
 
+const ACTIVE_TAB_KEY = 'horror-aids:dashboard-active-tab';
+
+function isDashboardTab(value: string | null): value is DashboardTab {
+  return value !== null && DASHBOARD_TABS.some((tab) => tab.id === value);
+}
+
 export const DashboardClient: React.FC = () => {
   const router = useRouter();
   const [stories, setStories] = useState<StoryIndexEntry[]>([]);
@@ -37,6 +43,28 @@ export const DashboardClient: React.FC = () => {
   const [activeTab, setActiveTab] = useState<DashboardTab>('active');
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const confirm = useConfirm();
+
+  // Read the last-viewed tab after mount only, so the very first client
+  // render matches the server-rendered HTML (both default to 'active') and
+  // localStorage never causes a hydration mismatch.
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(ACTIVE_TAB_KEY);
+      if (isDashboardTab(stored)) {
+        setActiveTab(stored);
+      }
+    } catch {
+      // ignore malformed/inaccessible storage
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(ACTIVE_TAB_KEY, activeTab);
+    } catch {
+      // best-effort persistence only
+    }
+  }, [activeTab]);
 
   const loadStories = useCallback(async (): Promise<void> => {
     try {
@@ -128,7 +156,8 @@ export const DashboardClient: React.FC = () => {
 
   // Three mutually exclusive buckets for a non-archived story, by how far its
   // pipeline has gone: still in progress, audio done but video not yet
-  // approved, or fully done (video approved).
+  // approved, or fully done (video approved — metadata approval afterward
+  // keeps it here, it doesn't regress the story back to "in progress").
   const byTab = (tab: DashboardTab): StoryIndexEntry[] =>
     stories.filter((story) => {
       if (tab === 'archived') {
@@ -138,12 +167,16 @@ export const DashboardClient: React.FC = () => {
         return false;
       }
       if (tab === 'verified_video') {
-        return story.status === 'video_complete';
+        return story.status === 'video_complete' || story.status === 'metadata_ready';
       }
       if (tab === 'verified_audio') {
         return story.status === 'audio_complete';
       }
-      return story.status !== 'video_complete' && story.status !== 'audio_complete';
+      return (
+        story.status !== 'video_complete' &&
+        story.status !== 'metadata_ready' &&
+        story.status !== 'audio_complete'
+      );
     });
 
   const visibleStories = byTab(activeTab);

@@ -41,7 +41,7 @@ const DEFAULT_CONFIG: Required<YoutubeMetadataAppConfig> = {
   titleMaxChars: 100,
   thumbnailPromptVariantCount: 2,
   pinnedCommentVariantCount: 3,
-  tagsMaxCount: 30,
+  tagsMaxCount: 8,
   tone:
     'kể chuyện ma Việt Nam, giọng radio đêm khuya, rùng rợn nhưng không giật gân rẻ tiền, ' +
     'không spoil đoạn kết hay lời giải bí ẩn của truyện',
@@ -148,7 +148,12 @@ function buildFieldGroupSchema(
             items: { type: 'string' },
             maxItems: config.tagsMaxCount,
             description:
-              'Từ khoá (chủ yếu tiếng Việt, có thể thêm vài từ tiếng Anh phổ biến) cho ô Tags của YouTube Studio.',
+              'Từ khoá cho ô Tags của YouTube Studio, gồm 2 nhóm: (1) luôn có vài tag chứa từ "nosleep" ' +
+              '(vd "nosleep", "nosleep stories", "r/nosleep") và vài tag chứa từ "creepypasta" (vd ' +
+              '"creepypasta", "creepypasta stories") — hai từ khoá tiếng Anh này được search rất nhiều cho ' +
+              'thể loại truyện kinh dị nên giúp video được index tốt hơn dù kênh nói tiếng Việt; (2) chỉ ' +
+              '1-2 tag bám sát nội dung cụ thể của truyện (bối cảnh, chủ đề, con vật/hiện tượng siêu nhiên ' +
+              'xuất hiện...), không thêm nhiều tag chung chung khác.',
           },
           category: { type: 'string', enum: [...YOUTUBE_CATEGORIES] },
         },
@@ -164,7 +169,14 @@ function buildFieldGroupSchema(
             maxItems: config.thumbnailPromptVariantCount,
             description:
               'Prompt bằng tiếng Anh để dán trực tiếp vào một AI image generator (Midjourney/DALL-E/etc.), ' +
-              'mô tả cảnh, ánh sáng, tâm trạng horror khớp với câu chuyện, tỉ lệ khung hình 16:9, không có chữ trong ảnh.',
+              'mô tả cảnh, ánh sáng, tâm trạng horror khớp với câu chuyện, viết thành một chuỗi các cụm ' +
+              'mô tả cách nhau bởi dấu phẩy và kết thúc bằng "..., no text, 16:9". Ví dụ: "A terrified ' +
+              'solitary man in a dim Seattle apartment at night, three computer monitors glowing blue, an ' +
+              'old rusty hard drive on a cluttered desk, heavy rain on the window, a vague tall gray ' +
+              'humanoid silhouette hiding behind a bookshelf, cinematic psychological horror, cold blue ' +
+              'lighting, atmospheric shadows, realistic details, no text, 16:9". TUYỆT ĐỐI không tự viết ' +
+              'câu \'With highlight text "..."\' và không nhắc tới tiêu đề trong prompt — app tự động ghép ' +
+              'câu đó ở cuối prompt theo đúng tiêu đề mà operator đang chọn.',
           },
         },
         required: ['thumbnailPrompts'],

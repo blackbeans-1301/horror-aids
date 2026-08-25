@@ -1,0 +1,4 @@
+- sidebar trái không lưu state confirm, reload thì lại hiển thị lại
+- ở log render video, có cái progress xem đã render được bao lâu, bên trái định dạng HH:MM:SS nhưng bên phải là định dạng giây thuần túy, điều này khiến tôi phải tính toán lại. Sửa để đồng bộ định dạng bên cạnh đó thêm progress kiểu %. Đồng thời thêm estimate thời gian còn lại dựa trên thực tế 
+- Trang media library cần thêm filter các category
+- Trang home cần lưu state user trước đó đã xem ở tab nào, để khi quay lại không bị liên tục quay ra tab active

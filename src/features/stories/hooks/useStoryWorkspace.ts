@@ -272,10 +272,9 @@ export function useStoryWorkspace(slug: string) {
     !hasActiveJob &&
     !isArchived;
   // Metadata generation only needs the story text (videoDurationMs is
-  // optional context for the prompt, fine as null this early) — it doesn't
-  // need to wait for video assembly, which can happen independently after.
-  const canGenerateMetadata = verifiedApproval === 'approved' && !isBusy && !isArchived;
-  const canApproveMetadata = youtubeMetadata?.status === 'generated' && !isArchived;
+  // optional context for the prompt, fine as null this early) — it can run
+  // at any point in the pipeline, independent of audio/video approval.
+  const canGenerateMetadata = !isBusy && !isArchived;
 
   const runAction = useCallback(
     async (action: () => Promise<void>, successMessage = ''): Promise<void> => {
@@ -461,6 +460,10 @@ export function useStoryWorkspace(slug: string) {
     });
   }, [clearDirty, runAction, slug]);
 
+  const revealIntroImage = useCallback(async (): Promise<void> => {
+    await runAction(() => storiesApi.revealIntroImage(slug));
+  }, [runAction, slug]);
+
   const approveFinalVideo = useCallback(async (): Promise<void> => {
     await runAction(
       () => storiesApi.approveFinalVideo(slug),
@@ -499,16 +502,34 @@ export function useStoryWorkspace(slug: string) {
     [markDirty],
   );
 
-  const saveYoutubeMetadata = useCallback(async (): Promise<void> => {
-    if (!youtubeMetadata) {
+  // Metadata edits auto-save (no manual Save/Approve step) — debounce so
+  // every keystroke doesn't fire its own request, and avoid runAction/isBusy
+  // here since that would disable the metadata inputs mid-typing.
+  const metadataAutoSaveTimerRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!dirty.youtubeMetadata || !youtubeMetadata) {
       return;
     }
-    await runAction(async () => {
-      const saved = await storiesApi.saveYoutubeMetadata(slug, youtubeMetadata);
-      setYoutubeMetadata(saved);
-      clearDirty('youtubeMetadata');
-    }, 'Đã lưu metadata.');
-  }, [clearDirty, runAction, slug, youtubeMetadata]);
+    if (metadataAutoSaveTimerRef.current) {
+      window.clearTimeout(metadataAutoSaveTimerRef.current);
+    }
+    metadataAutoSaveTimerRef.current = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const saved = await storiesApi.saveYoutubeMetadata(slug, youtubeMetadata);
+          setYoutubeMetadata(saved);
+          clearDirty('youtubeMetadata');
+        } catch (error) {
+          toast.error(error instanceof Error ? error.message : 'Không thể tự động lưu metadata.');
+        }
+      })();
+    }, 800);
+    return () => {
+      if (metadataAutoSaveTimerRef.current) {
+        window.clearTimeout(metadataAutoSaveTimerRef.current);
+      }
+    };
+  }, [clearDirty, dirty.youtubeMetadata, slug, youtubeMetadata]);
 
   const generateYoutubeMetadata = useCallback(
     async (fields?: YoutubeMetadataFieldGroup[]): Promise<void> => {
@@ -520,12 +541,6 @@ export function useStoryWorkspace(slug: string) {
     },
     [clearDirty, runAction, slug],
   );
-
-  const approveYoutubeMetadata = useCallback(async (): Promise<void> => {
-    await runAction(async () => {
-      await storiesApi.approveYoutubeMetadata(slug);
-    }, 'Đã duyệt metadata. Story sẵn sàng để đăng YouTube.');
-  }, [runAction, slug]);
 
   const syncFromLibrary = useCallback(async (): Promise<void> => {
     await runAction(
@@ -733,7 +748,6 @@ export function useStoryWorkspace(slug: string) {
     canConcat,
     canRenderVideo,
     canGenerateMetadata,
-    canApproveMetadata,
     refresh,
     startJob,
     stopJob,
@@ -750,14 +764,13 @@ export function useStoryWorkspace(slug: string) {
     resetVideoPlanGain,
     uploadIntroImage,
     deleteIntroImage,
+    revealIntroImage,
     approveFinalVideo,
     revealFinalVideo,
     selectVideoRender,
     deleteVideoRender,
     updateYoutubeMetadata,
-    saveYoutubeMetadata,
     generateYoutubeMetadata,
-    approveYoutubeMetadata,
     syncFromLibrary,
     loadJobLog,
     updateCharacter,

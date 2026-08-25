@@ -1,5 +1,6 @@
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { Check, Save, Trash2 } from 'lucide-react';
-import React from 'react';
+import React, { useRef } from 'react';
 
 import { useConfirm } from '@/components/ConfirmDialog';
 import { Badge } from '@/components/ui/badge';
@@ -27,6 +28,123 @@ interface SegmentsTabProps {
   isDirty: boolean;
 }
 
+interface SegmentRowProps {
+  segment: SegmentRecord;
+  index: number;
+  characters: CharacterRecord[];
+  onUpdateSegment: (index: number, patch: Partial<SegmentRecord>) => void;
+  onInsertSegmentAfter: (index: number) => void;
+  onSplitSegment: (index: number) => void;
+  onMergeWithNext: (index: number) => void;
+  onDeleteSegment: (index: number) => void;
+}
+
+// Memoized so editing one segment (a new segments array reference every
+// keystroke) only re-renders the row whose own props actually changed —
+// see useStoryWorkspace's updateSegment, which preserves object identity
+// for every other segment in the array.
+const SegmentRow = React.memo(
+  React.forwardRef<HTMLTableRowElement, SegmentRowProps & { 'data-index': number }>(
+    function SegmentRow(
+      {
+        segment,
+        index,
+        characters,
+        onUpdateSegment,
+        onInsertSegmentAfter,
+        onSplitSegment,
+        onMergeWithNext,
+        onDeleteSegment,
+        ...rest
+      },
+      ref,
+    ) {
+      const confirm = useConfirm();
+
+      const handleDelete = async (): Promise<void> => {
+        const confirmed = await confirm({
+          title: 'Delete segment?',
+          description: `Delete segment ${segment.order}? This removes its text and any generated audio once you save.`,
+          confirmLabel: 'Delete',
+          danger: true,
+        });
+        if (confirmed) {
+          onDeleteSegment(index);
+        }
+      };
+
+      return (
+        <TableRow ref={ref} {...rest}>
+          <TableCell className="mono">{segment.order}</TableCell>
+          <TableCell>
+            <Select
+              value={segment.speakerId}
+              onValueChange={(value) => onUpdateSegment(index, { speakerId: value })}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {characters.map((character) => (
+                  <SelectItem key={character.id} value={character.id}>
+                    {character.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </TableCell>
+          <TableCell>
+            <Textarea
+              className="min-h-[120px] resize-y"
+              value={segment.text}
+              onChange={(event) => onUpdateSegment(index, { text: event.target.value })}
+            />
+          </TableCell>
+          <TableCell>
+            <Select
+              value={segment.emotion ?? 'natural'}
+              onValueChange={(value) => onUpdateSegment(index, { emotion: value as SegmentEmotion })}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="natural">natural</SelectItem>
+                <SelectItem value="storytelling">storytelling</SelectItem>
+              </SelectContent>
+            </Select>
+          </TableCell>
+          <TableCell>
+            <Badge>{segment.status}</Badge>
+          </TableCell>
+          <TableCell>
+            <div className="button-row">
+              <Button
+                variant="secondary"
+                type="button"
+                title="Insert a new segment below this one"
+                onClick={() => onInsertSegmentAfter(index)}
+              >
+                + Below
+              </Button>
+              <Button variant="secondary" type="button" onClick={() => onSplitSegment(index)}>
+                Split
+              </Button>
+              <Button variant="secondary" type="button" onClick={() => onMergeWithNext(index)}>
+                Merge
+              </Button>
+              <Button variant="destructive" type="button" onClick={() => void handleDelete()}>
+                <Trash2 size={15} aria-hidden="true" />
+              </Button>
+            </div>
+          </TableCell>
+        </TableRow>
+      );
+    },
+  ),
+);
+SegmentRow.displayName = 'SegmentRow';
+
 export const SegmentsTab: React.FC<SegmentsTabProps> = ({
   segments,
   characters,
@@ -43,20 +161,24 @@ export const SegmentsTab: React.FC<SegmentsTabProps> = ({
   onApproveSegments,
   isDirty,
 }) => {
-  const confirm = useConfirm();
+  const scrollRef = useRef<HTMLDivElement | null>(null);
 
-  const handleDelete = async (index: number): Promise<void> => {
-    const segment = segments[index];
-    const confirmed = await confirm({
-      title: 'Delete segment?',
-      description: `Delete segment ${segment?.order ?? index + 1}? This removes its text and any generated audio once you save.`,
-      confirmLabel: 'Delete',
-      danger: true,
-    });
-    if (confirmed) {
-      onDeleteSegment(index);
-    }
-  };
+  // Rows vary in height (multi-line text, manual textarea resize), so we
+  // measure each mounted row and only keep ~15-20 in the DOM at a time
+  // instead of all 300-400 — that's what makes this table usable at scale.
+  const rowVirtualizer = useVirtualizer({
+    count: segments.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 176,
+    overscan: 6,
+    getItemKey: (index) => segments[index]?.id ?? index,
+  });
+
+  const virtualItems = rowVirtualizer.getVirtualItems();
+  const totalSize = rowVirtualizer.getTotalSize();
+  const paddingTop = virtualItems.length > 0 ? virtualItems[0].start : 0;
+  const paddingBottom =
+    virtualItems.length > 0 ? totalSize - virtualItems[virtualItems.length - 1].end : 0;
 
   return (
     <Card>
@@ -109,86 +231,53 @@ export const SegmentsTab: React.FC<SegmentsTabProps> = ({
           it), so edits made mid-run don&apos;t end up out of sync with audio it just generated.
         </p>
       ) : null}
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Order</TableHead>
-            <TableHead>Speaker</TableHead>
-            <TableHead>Text</TableHead>
-            <TableHead>Emotion</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead />
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {segments.map((segment, index) => (
-            <TableRow key={`${segment.id}-${index}`}>
-              <TableCell className="mono">{segment.order}</TableCell>
-              <TableCell>
-                <Select
-                  value={segment.speakerId}
-                  onValueChange={(value) => onUpdateSegment(index, { speakerId: value })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {characters.map((character) => (
-                      <SelectItem key={character.id} value={character.id}>
-                        {character.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </TableCell>
-              <TableCell>
-                <Textarea
-                  value={segment.text}
-                  onChange={(event) => onUpdateSegment(index, { text: event.target.value })}
-                />
-              </TableCell>
-              <TableCell>
-                <Select
-                  value={segment.emotion ?? 'natural'}
-                  onValueChange={(value) => onUpdateSegment(index, { emotion: value as SegmentEmotion })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="natural">natural</SelectItem>
-                    <SelectItem value="storytelling">storytelling</SelectItem>
-                  </SelectContent>
-                </Select>
-              </TableCell>
-              <TableCell>
-                <Badge>{segment.status}</Badge>
-              </TableCell>
-              <TableCell>
-                <div className="button-row">
-                  <Button
-                    variant="secondary"
-                    type="button"
-                    title="Insert a new segment below this one"
-                    onClick={() => onInsertSegmentAfter(index)}
-                  >
-                    + Below
-                  </Button>
-                  <Button variant="secondary" type="button" onClick={() => onSplitSegment(index)}>
-                    Split
-                  </Button>
-                  <Button variant="secondary" type="button" onClick={() => onMergeWithNext(index)}>
-                    Merge
-                  </Button>
-                  <Button variant="destructive" type="button" onClick={() => void handleDelete(index)}>
-                    <Trash2 size={15} aria-hidden="true" />
-                  </Button>
-                </div>
-              </TableCell>
+      <div ref={scrollRef} className="max-h-[70vh] overflow-y-auto">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Order</TableHead>
+              <TableHead>Speaker</TableHead>
+              <TableHead>Text</TableHead>
+              <TableHead>Emotion</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead />
             </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+          </TableHeader>
+          <TableBody>
+            {paddingTop > 0 ? (
+              <tr aria-hidden="true">
+                <td colSpan={6} style={{ height: paddingTop, padding: 0, border: 0 }} />
+              </tr>
+            ) : null}
+            {virtualItems.map((virtualItem) => {
+              const segment = segments[virtualItem.index];
+              if (!segment) {
+                return null;
+              }
+              return (
+                <SegmentRow
+                  key={segment.id}
+                  data-index={virtualItem.index}
+                  ref={rowVirtualizer.measureElement}
+                  segment={segment}
+                  index={virtualItem.index}
+                  characters={characters}
+                  onUpdateSegment={onUpdateSegment}
+                  onInsertSegmentAfter={onInsertSegmentAfter}
+                  onSplitSegment={onSplitSegment}
+                  onMergeWithNext={onMergeWithNext}
+                  onDeleteSegment={onDeleteSegment}
+                />
+              );
+            })}
+            {paddingBottom > 0 ? (
+              <tr aria-hidden="true">
+                <td colSpan={6} style={{ height: paddingBottom, padding: 0, border: 0 }} />
+              </tr>
+            ) : null}
+          </TableBody>
+        </Table>
+      </div>
     </Card>
   );
 };

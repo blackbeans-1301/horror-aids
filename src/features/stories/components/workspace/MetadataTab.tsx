@@ -1,14 +1,14 @@
-import { Check, Copy, RefreshCw, Save, Sparkles } from 'lucide-react';
+import { Copy, RefreshCw, Sparkles, Trash2 } from 'lucide-react';
 import React from 'react';
 import { toast } from 'sonner';
 
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Textarea } from '@/components/ui/textarea';
+import { composeThumbnailPrompt, highlightTextLine } from '@/lib/thumbnail-prompt';
 import type { YoutubeMetadataFieldGroup, YoutubeMetadataFile } from '@/types/story';
 
 interface MetadataTabProps {
@@ -16,13 +16,9 @@ interface MetadataTabProps {
   isDirty: boolean;
   isBusy: boolean;
   canGenerate: boolean;
-  canApprove: boolean;
-  metadataApprovalStatus: 'pending' | 'approved' | 'rejected';
   onUpdate: (patch: Partial<YoutubeMetadataFile>) => void;
-  onSave: () => void;
   onGenerate: () => void;
   onGenerateField: (field: YoutubeMetadataFieldGroup) => void;
-  onApprove: () => void;
 }
 
 async function copyToClipboard(label: string, value: string): Promise<void> {
@@ -56,18 +52,48 @@ const RegenerateButton: React.FC<{ label: string; isBusy: boolean; onClick: () =
   </Button>
 );
 
+const DeleteOptionButton: React.FC<{ label: string; disabled: boolean; onClick: () => void }> = ({
+  label,
+  disabled,
+  onClick,
+}) => (
+  <Button
+    variant="destructive"
+    size="sm"
+    type="button"
+    title={disabled ? 'Cần giữ lại ít nhất 1 phương án' : `Xoá ${label}`}
+    onClick={onClick}
+    disabled={disabled}
+  >
+    <Trash2 size={14} aria-hidden="true" />
+  </Button>
+);
+
+// Dropping the currently-selected option falls back to whichever option
+// slides into its slot; dropping one before it just shifts the index down
+// so the same option stays selected.
+function removeAt<T>(list: T[], index: number): T[] {
+  return list.filter((_, i) => i !== index);
+}
+
+function selectedIndexAfterRemoval(selectedIndex: number, removedIndex: number): number {
+  if (removedIndex < selectedIndex) {
+    return selectedIndex - 1;
+  }
+  if (removedIndex === selectedIndex) {
+    return 0;
+  }
+  return selectedIndex;
+}
+
 export const MetadataTab: React.FC<MetadataTabProps> = ({
   metadata,
   isDirty,
   isBusy,
   canGenerate,
-  canApprove,
-  metadataApprovalStatus,
   onUpdate,
-  onSave,
   onGenerate,
   onGenerateField,
-  onApprove,
 }) => {
   if (!metadata) {
     return (
@@ -78,6 +104,11 @@ export const MetadataTab: React.FC<MetadataTabProps> = ({
   }
 
   const isEmpty = metadata.status === 'pending' && metadata.titles.length === 0;
+  // Thumbnail prompts are stored without their highlight sentence; it is
+  // appended here so a copy always carries whichever title is selected right
+  // now, edits included.
+  const selectedTitle =
+    metadata.titles[metadata.selectedTitleIndex] ?? metadata.titles[0] ?? '';
 
   return (
     <Card className="grid gap-3">
@@ -90,6 +121,7 @@ export const MetadataTab: React.FC<MetadataTabProps> = ({
             bao giờ bị AI viết lại, xem/sửa ở <code>config/templates/youtube-description.txt</code>.
           </p>
         </div>
+        <span className="label">{isDirty ? 'Đang tự động lưu...' : 'Đã lưu'}</span>
       </div>
 
       <div className="button-row">
@@ -97,9 +129,6 @@ export const MetadataTab: React.FC<MetadataTabProps> = ({
           <Sparkles size={16} aria-hidden="true" />
           {metadata.status === 'pending' ? 'Generate metadata' : 'Generate lại tất cả'}
         </Button>
-        {!canGenerate ? (
-          <span className="label">Cần duyệt verified audio trước khi generate metadata.</span>
-        ) : null}
         {metadata.status === 'failed' && metadata.error ? (
           <span className="label">Lỗi lần trước: {metadata.error}</span>
         ) : null}
@@ -139,6 +168,16 @@ export const MetadataTab: React.FC<MetadataTabProps> = ({
                     disabled={isBusy}
                   />
                   <CopyButton label={`title #${index + 1}`} value={title} />
+                  <DeleteOptionButton
+                    label={`title #${index + 1}`}
+                    disabled={isBusy || metadata.titles.length <= 1}
+                    onClick={() =>
+                      onUpdate({
+                        titles: removeAt(metadata.titles, index),
+                        selectedTitleIndex: selectedIndexAfterRemoval(metadata.selectedTitleIndex, index),
+                      })
+                    }
+                  />
                 </div>
               ))}
             </RadioGroup>
@@ -224,6 +263,11 @@ export const MetadataTab: React.FC<MetadataTabProps> = ({
                 onClick={() => onGenerateField('thumbnailPrompts')}
               />
             </div>
+            <p className="label">
+              Mỗi prompt khi copy sẽ tự động kèm câu{' '}
+              <code>{highlightTextLine(selectedTitle || '[title đang chọn]')}</code> ở cuối — luôn theo
+              đúng title đang được chọn/sửa ở trên, nên không cần tự gõ câu này vào prompt.
+            </p>
             {metadata.thumbnailPrompts.map((prompt, index) => (
               <div className="field" key={index}>
                 <Label htmlFor={`metadata-thumbnail-prompt-${index}`}>
@@ -240,8 +284,14 @@ export const MetadataTab: React.FC<MetadataTabProps> = ({
                   }}
                   disabled={isBusy}
                 />
+                <p className="label">
+                  {selectedTitle ? `+ ${highlightTextLine(selectedTitle)}` : '(chưa có title để highlight)'}
+                </p>
                 <div className="button-row">
-                  <CopyButton label={`thumbnail prompt #${index + 1}`} value={prompt} />
+                  <CopyButton
+                    label={`thumbnail prompt #${index + 1}`}
+                    value={composeThumbnailPrompt(prompt, selectedTitle)}
+                  />
                 </div>
               </div>
             ))}
@@ -276,22 +326,23 @@ export const MetadataTab: React.FC<MetadataTabProps> = ({
                     disabled={isBusy}
                   />
                   <CopyButton label={`pinned comment #${index + 1}`} value={comment} />
+                  <DeleteOptionButton
+                    label={`pinned comment #${index + 1}`}
+                    disabled={isBusy || metadata.pinnedComment.length <= 1}
+                    onClick={() =>
+                      onUpdate({
+                        pinnedComment: removeAt(metadata.pinnedComment, index),
+                        selectedPinnedCommentIndex: selectedIndexAfterRemoval(
+                          metadata.selectedPinnedCommentIndex,
+                          index,
+                        ),
+                      })
+                    }
+                  />
                 </div>
               ))}
             </RadioGroup>
           </Card>
-
-          <div className="button-row">
-            <Button variant="secondary" type="button" onClick={onSave} disabled={isBusy || !isDirty}>
-              <Save size={16} aria-hidden="true" />
-              Save
-            </Button>
-            <Button type="button" onClick={onApprove} disabled={!canApprove || isBusy}>
-              <Check size={16} aria-hidden="true" />
-              Approve metadata
-            </Button>
-            {metadataApprovalStatus === 'approved' ? <Badge variant="good">Approved</Badge> : null}
-          </div>
         </>
       )}
     </Card>

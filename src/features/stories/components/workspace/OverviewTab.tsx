@@ -1,11 +1,15 @@
 import { AudioLines, Check, Play, RefreshCw, Save, Wand2 } from 'lucide-react';
-import React from 'react';
+import Link from 'next/link';
+import React, { useEffect, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardTitle } from '@/components/ui/card';
 import { formatLongDuration } from '@/features/stories/utils/format';
-import type { ApprovalStatus, JobType } from '@/types/story';
+import { libraryApi } from '@/features/library/api/libraryApi';
+import type { ApprovalStatus, ContentStoryDocuments, JobType } from '@/types/story';
 
 // Measured from real runs: ~115 words of TTS input produces ~30s of audio,
 // and generating+verifying that 30s of audio takes ~20s of wall-clock time.
@@ -16,6 +20,55 @@ function countWords(text: string): number {
   const trimmed = text.trim();
   return trimmed ? trimmed.split(/\s+/).length : 0;
 }
+
+// Truyện nhập từ Thư viện truyện có Bible.md / Outline_Timeline.md riêng ở
+// đó — không copy vào workspace, nên phải fetch lại từ Thư viện mỗi khi mở
+// tab này (xem src/lib/content-library.ts::readDocuments).
+function useSourceDocuments(sourceContentId: string | null): ContentStoryDocuments | null {
+  const [documents, setDocuments] = useState<ContentStoryDocuments | null>(null);
+
+  useEffect(() => {
+    if (!sourceContentId) {
+      setDocuments(null);
+      return;
+    }
+    let cancelled = false;
+    void libraryApi
+      .detail(sourceContentId)
+      .then((detail) => {
+        if (!cancelled) {
+          setDocuments(detail.documents);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setDocuments(null);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sourceContentId]);
+
+  return documents;
+}
+
+const SourceDoc: React.FC<{ title: string; content: string | null; emptyLabel: string }> = ({
+  title,
+  content,
+  emptyLabel,
+}) => (
+  <Card>
+    <CardTitle>{title}</CardTitle>
+    {content ? (
+      <div className="markdown-body">
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+      </div>
+    ) : (
+      <p className="label">{emptyLabel}</p>
+    )}
+  </Card>
+);
 
 interface OverviewTabProps {
   storyText: string;
@@ -57,9 +110,37 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
   const wordCount = countWords(storyText);
   const estimatedAudioMs = (wordCount / WORDS_PER_AUDIO_SECOND) * 1000;
   const estimatedGenerateMs = estimatedAudioMs * GENERATE_SECONDS_PER_AUDIO_SECOND;
+  const sourceDocuments = useSourceDocuments(sourceContentId);
 
   return (
     <section className="layout-grid">
+      {sourceContentId ? (
+        <>
+          <div className="page-header span-2">
+            <div>
+              <h2>Bible &amp; Outline (từ Thư viện truyện)</h2>
+              <p>
+                Truyện này được nhập từ Thư viện truyện — tóm tắt bối cảnh, nhân vật, cốt truyện xem
+                đầy đủ ở <Link href={`/library/${sourceContentId}`}>trang Thư viện</Link>.
+              </p>
+            </div>
+          </div>
+          <div className="span-2">
+            <SourceDoc
+              title="Bible"
+              content={sourceDocuments?.bible ?? null}
+              emptyLabel="Truyện này chưa có Bible.md."
+            />
+          </div>
+          <div className="span-2">
+            <SourceDoc
+              title="Outline & Timeline"
+              content={sourceDocuments?.outline ?? null}
+              emptyLabel="Truyện này chưa có Outline_Timeline.md."
+            />
+          </div>
+        </>
+      ) : null}
       <Card>
         <CardTitle>Story stats</CardTitle>
         <p>Estimates based on ~{Math.round(WORDS_PER_AUDIO_SECOND * 30)} words per 30s of audio, ~20s generate time per 30s of audio.</p>

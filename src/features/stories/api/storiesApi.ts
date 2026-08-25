@@ -185,6 +185,10 @@ export const storiesApi = {
     return data.videoPlan;
   },
 
+  async revealIntroImage(slug: string): Promise<void> {
+    await requestJson(`/api/stories/${slug}/reveal-intro-image`, { method: 'POST' });
+  },
+
   async approveFinalVideo(slug: string): Promise<void> {
     await requestJson(`/api/stories/${slug}/approve-final-video`, { method: 'POST' });
   },
@@ -256,10 +260,4 @@ export const storiesApi = {
     return data.metadata;
   },
 
-  async approveYoutubeMetadata(slug: string): Promise<StoryRecord> {
-    const data = await requestJson<{ story: StoryRecord }>(`/api/stories/${slug}/metadata/approve`, {
-      method: 'POST',
-    });
-    return data.story;
-  },
 };

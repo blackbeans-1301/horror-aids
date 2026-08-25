@@ -53,13 +53,13 @@
     "channels": 2,
     "referenceLufs": -16,
     "loudnorm": { "targetLufs": -16, "truePeakDb": -1.5, "loudnessRange": 11 },
-    "introDurationMs": 10000,
+    "introDurationMs": 8000,
     "introZoomEnabled": true,
     "introZoomEndScale": 1.12,
     "leadInMs": 800,
     "tailOutMs": 4000,
     "transitionMs": 1000,
-    "grade": { "brightness": -0.05, "saturation": 0.85, "vignette": true },
+    "grade": { "brightness": -0.05, "saturation": 0.85, "vignette": false },
     "ducking": { "enabled": true, "threshold": 0.05, "ratio": 6, "attackMs": 50, "releaseMs": 1000 },
     "defaultGainDb": { "introMusic": -3, "bgMusic": -22, "rainAmbience": -26 }
   },
@@ -68,7 +68,7 @@
     "titleVariantCount": 5,
     "titleMaxChars": 100,
     "thumbnailPromptVariantCount": 2,
-    "tagsMaxCount": 30,
+    "tagsMaxCount": 8,
     "tone": "kể chuyện ma, giọng radio đêm khuya, rùng rợn nhưng không giật gân rẻ tiền, không spoil đoạn kết hay lời giải bí ẩn của truyện",
     "targetAudience": "người Việt 18-35 tuổi thích nghe truyện ma khi ngủ, lái xe, hoặc làm việc"
   }

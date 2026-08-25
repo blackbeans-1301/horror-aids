@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { pumpQueue } from '@/lib/job-runner';
-import { deleteStoryPermanently, getStoryDetail, patchStory } from '@/lib/json-store';
+import { cleanupStoryTrash, deleteStoryPermanently, getStoryDetail, patchStory } from '@/lib/json-store';
 
 interface StoryRouteContext {
   params: Promise<{ slug: string }>;
@@ -60,6 +60,14 @@ export async function PATCH(
             : null
           : current.archivedAt,
     }));
+
+    // Archiving a story whose final video is already approved means every
+    // other generated file (old video renders, swapped-out audio takes) is
+    // now permanently unreachable — clear it out at this exact moment
+    // rather than on every archive toggle.
+    if (body.archived === true && story.approvals.finalVideo.status === 'approved') {
+      await cleanupStoryTrash(slug);
+    }
 
     return NextResponse.json({ story });
   } catch (error) {

@@ -6,8 +6,8 @@ import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { NumberInput } from '@/components/ui/number-input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { mediaApi } from '@/features/stories/api/mediaApi';
 import { gradeToCssFilter, type ResolvedGrade } from '@/lib/grade';
@@ -92,13 +92,12 @@ export const GradeOverrideEditor: React.FC<GradeOverrideEditorProps> = ({
         </Label>
         <div className="grid gap-1.5">
           <Label>Brightness (-1 đến 1, mặc định global -0.05)</Label>
-          <Input
-            type="number"
+          <NumberInput
             step={0.01}
             min={-1}
             max={1}
             value={value.brightness ?? 0}
-            onChange={(event) => onChange({ ...value, brightness: Number(event.target.value) })}
+            onChange={(next) => onChange({ ...value, brightness: next })}
             disabled={disabled || value.brightness === null}
           />
         </div>

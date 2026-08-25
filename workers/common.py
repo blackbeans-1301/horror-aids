@@ -161,7 +161,15 @@ def atomic_write(path: Path, content: str | bytes) -> None:
     with tempfile.NamedTemporaryFile(mode=mode, encoding=encoding, delete=False, dir=path.parent) as tmp:
         tmp.write(content)
         tmp_path = Path(tmp.name)
-    tmp_path.replace(path)
+    try:
+        tmp_path.replace(path)
+    except FileNotFoundError:
+        # tmp_path lives in path.parent, so this only happens when that
+        # directory was removed concurrently (e.g. the story got deleted
+        # from the Node server mid-write). Nothing left on disk to update —
+        # drop the write instead of crashing the worker.
+        tmp_path.unlink(missing_ok=True)
+        print(f"atomic_write: destination directory disappeared before replace could complete: {path}")
 
 
 def load_context() -> WorkerContext:

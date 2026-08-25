@@ -1,5 +1,6 @@
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { AudioLines, Check, Download, Flag, FolderOpen, History, Play, RefreshCw } from 'lucide-react';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -77,6 +78,145 @@ const AudioDurationCell: React.FC<{ src: string }> = ({ src }) => {
   return <span className="mono">{formatClockDuration(duration)}</span>;
 };
 
+interface AudioSegmentRowProps {
+  slug: string;
+  segment: SegmentRecord;
+  isPlaying: boolean;
+  isPlayable: boolean;
+  isSelectedForRegen: boolean;
+  canGenerate: boolean;
+  onToggleRegenSelection: (segmentId: string) => void;
+  onToggleSegmentFlag: (segmentId: string) => void;
+  onSelectSegmentTake: (segmentId: string) => void;
+  onPlayFromSegment: (segmentId: string) => void;
+  onStartJob: (type: JobType, segmentIds?: string[]) => void;
+}
+
+// Memoized row: at 300-400 segments, only the touched row's props (flag,
+// regen selection, verification status, ...) should actually change per
+// action — this stops every other mounted row from re-rendering with it.
+const AudioSegmentRow = React.memo(
+  React.forwardRef<HTMLTableRowElement, AudioSegmentRowProps & { 'data-index': number }>(
+    function AudioSegmentRow(
+      {
+        slug,
+        segment,
+        isPlaying,
+        isPlayable,
+        isSelectedForRegen,
+        canGenerate,
+        onToggleRegenSelection,
+        onToggleSegmentFlag,
+        onSelectSegmentTake,
+        onPlayFromSegment,
+        onStartJob,
+        ...rest
+      },
+      ref,
+    ) {
+      return (
+        <TableRow ref={ref} {...rest} className={segment.flagged ? 'row-flagged' : undefined}>
+          <TableCell>
+            <Button
+              variant="secondary"
+              type="button"
+              title={segment.flagged ? 'Unflag this segment' : 'Flag this segment for review'}
+              aria-pressed={segment.flagged}
+              onClick={() => onToggleSegmentFlag(segment.id)}
+            >
+              <Flag size={15} aria-hidden="true" fill={segment.flagged ? 'currentColor' : 'none'} />
+            </Button>
+          </TableCell>
+          <TableCell>
+            {segment.status !== 'skipped' ? (
+              <Checkbox
+                checked={isSelectedForRegen}
+                onCheckedChange={() => onToggleRegenSelection(segment.id)}
+                aria-label={`Select segment ${segment.id} for regeneration`}
+              />
+            ) : null}
+          </TableCell>
+          <TableCell className="mono">
+            {isPlaying ? '▶ ' : ''}
+            {segment.id}
+          </TableCell>
+          <TableCell>{segment.speakerId}</TableCell>
+          <TableCell>
+            <Badge
+              variant={
+                segment.verification.status === 'passed'
+                  ? 'good'
+                  : segment.verification.status === 'failed' || segment.verification.status === 'max_attempts_reached'
+                    ? 'bad'
+                    : 'warn'
+              }
+            >
+              {segment.verification.status}
+            </Badge>
+            <div className="label">attempts {segment.verification.attempts}</div>
+          </TableCell>
+          <TableCell>
+            {segment.status === 'complete' || segment.verification.status === 'passed' ? (
+              <AudioDurationCell src={assetUrl(slug, segmentAudioPath(segment))} />
+            ) : (
+              <span className="label">No audio</span>
+            )}
+          </TableCell>
+          <TableCell>
+            {segment.previousTake ? (
+              <div className="button-row">
+                <audio
+                  controls
+                  preload="none"
+                  style={{ height: 28, width: 160 }}
+                  src={assetUrl(slug, segment.previousTake.path)}
+                />
+                <Button
+                  variant="secondary"
+                  type="button"
+                  title="Switch this segment back to its previous audio take"
+                  onClick={() => onSelectSegmentTake(segment.id)}
+                >
+                  <History size={15} aria-hidden="true" />
+                  Use this take
+                </Button>
+              </div>
+            ) : (
+              <span className="label">—</span>
+            )}
+          </TableCell>
+          <TableCell>
+            {segment.status !== 'skipped' ? (
+              <div className="button-row">
+                <Button
+                  variant="secondary"
+                  type="button"
+                  disabled={!isPlayable}
+                  title="Play the story from this segment onward"
+                  onClick={() => onPlayFromSegment(segment.id)}
+                >
+                  <Play size={15} aria-hidden="true" />
+                </Button>
+                <Button
+                  variant="secondary"
+                  type="button"
+                  disabled={!canGenerate}
+                  title={canGenerate ? `Regenerate and verify segment ${segment.id} only` : 'Approve segments and assign voices first'}
+                  onClick={() => onStartJob('generate_verify_tts', [segment.id])}
+                >
+                  <RefreshCw size={15} aria-hidden="true" />
+                  Regenerate
+                </Button>
+              </div>
+            ) : null}
+          </TableCell>
+        </TableRow>
+      );
+    },
+  ),
+);
+AudioSegmentRow.displayName = 'AudioSegmentRow';
+
 interface AudioTabProps {
   slug: string;
   segments: SegmentRecord[];
@@ -130,6 +270,24 @@ export const AudioTab: React.FC<AudioTabProps> = ({
   const flaggedCount = segments.filter((segment) => segment.flagged).length;
   const visibleSegments = showFlaggedOnly ? segments.filter((segment) => segment.flagged) : segments;
 
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  // Same windowing approach as SegmentsTab: only mount the rows near the
+  // viewport instead of all 300-400 at once.
+  const rowVirtualizer = useVirtualizer({
+    count: visibleSegments.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 72,
+    overscan: 8,
+    getItemKey: (index) => visibleSegments[index]?.id ?? index,
+  });
+
+  const virtualItems = rowVirtualizer.getVirtualItems();
+  const totalSize = rowVirtualizer.getTotalSize();
+  const paddingTop = virtualItems.length > 0 ? virtualItems[0].start : 0;
+  const paddingBottom =
+    virtualItems.length > 0 ? totalSize - virtualItems[virtualItems.length - 1].end : 0;
+
   return (
     <Card className="grid gap-3">
       <div className="page-header">
@@ -141,9 +299,9 @@ export const AudioTab: React.FC<AudioTabProps> = ({
       <Card>
         <CardTitle>Final M4A</CardTitle>
         {finalAudioExists ? (
-          <>
+          <div className="group/final-audio">
             <audio controls src={assetUrl(slug, finalAudioPath)} />
-            <div className="button-row">
+            <div className="button-row invisible group-hover/final-audio:visible focus-within:visible">
               <Button asChild variant="secondary">
                 <a href={assetUrl(slug, finalAudioPath)} download={`${slug}-final.m4a`}>
                   <Download size={16} aria-hidden="true" />
@@ -160,7 +318,7 @@ export const AudioTab: React.FC<AudioTabProps> = ({
                 Reveal in Finder
               </Button>
             </div>
-          </>
+          </div>
         ) : (
           <p>Final audio will appear after concat.</p>
         )}
@@ -230,131 +388,65 @@ export const AudioTab: React.FC<AudioTabProps> = ({
         </Button>
       </div>
 
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead />
-            <TableHead />
-            <TableHead>ID</TableHead>
-            <TableHead>Speaker</TableHead>
-            <TableHead>Verification</TableHead>
-            <TableHead>Duration</TableHead>
-            <TableHead>Previous take</TableHead>
-            <TableHead />
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {visibleSegments.length === 0 ? (
+      <div ref={scrollRef} className="max-h-[70vh] overflow-y-auto">
+        <Table>
+          <TableHeader>
             <TableRow>
-              <TableCell colSpan={8} className="label">
-                No flagged segments.
-              </TableCell>
+              <TableHead />
+              <TableHead />
+              <TableHead>ID</TableHead>
+              <TableHead>Speaker</TableHead>
+              <TableHead>Verification</TableHead>
+              <TableHead>Duration</TableHead>
+              <TableHead>Previous take</TableHead>
+              <TableHead />
             </TableRow>
-          ) : null}
-          {visibleSegments.map((segment) => (
-            <TableRow key={segment.id} className={segment.flagged ? 'row-flagged' : undefined}>
-              <TableCell>
-                <Button
-                  variant="secondary"
-                  type="button"
-                  title={segment.flagged ? 'Unflag this segment' : 'Flag this segment for review'}
-                  aria-pressed={segment.flagged}
-                  onClick={() => onToggleSegmentFlag(segment.id)}
-                >
-                  <Flag
-                    size={15}
-                    aria-hidden="true"
-                    fill={segment.flagged ? 'currentColor' : 'none'}
-                  />
-                </Button>
-              </TableCell>
-              <TableCell>
-                {segment.status !== 'skipped' ? (
-                  <Checkbox
-                    checked={regenSelection.has(segment.id)}
-                    onCheckedChange={() => onToggleRegenSelection(segment.id)}
-                    aria-label={`Select segment ${segment.id} for regeneration`}
-                  />
-                ) : null}
-              </TableCell>
-              <TableCell className="mono">
-                {playingSegment?.id === segment.id ? '▶ ' : ''}
-                {segment.id}
-              </TableCell>
-              <TableCell>{segment.speakerId}</TableCell>
-              <TableCell>
-                <Badge
-                  variant={
-                    segment.verification.status === 'passed'
-                      ? 'good'
-                      : segment.verification.status === 'failed' || segment.verification.status === 'max_attempts_reached'
-                        ? 'bad'
-                        : 'warn'
-                  }
-                >
-                  {segment.verification.status}
-                </Badge>
-                <div className="label">attempts {segment.verification.attempts}</div>
-              </TableCell>
-              <TableCell>
-                {segment.status === 'complete' || segment.verification.status === 'passed' ? (
-                  <AudioDurationCell src={assetUrl(slug, segmentAudioPath(segment))} />
-                ) : (
-                  <span className="label">No audio</span>
-                )}
-              </TableCell>
-              <TableCell>
-                {segment.previousTake ? (
-                  <div className="button-row">
-                    <audio
-                      controls
-                      preload="none"
-                      style={{ height: 28, width: 160 }}
-                      src={assetUrl(slug, segment.previousTake.path)}
-                    />
-                    <Button
-                      variant="secondary"
-                      type="button"
-                      title="Switch this segment back to its previous audio take"
-                      onClick={() => onSelectSegmentTake(segment.id)}
-                    >
-                      <History size={15} aria-hidden="true" />
-                      Use this take
-                    </Button>
-                  </div>
-                ) : (
-                  <span className="label">—</span>
-                )}
-              </TableCell>
-              <TableCell>
-                {segment.status !== 'skipped' ? (
-                  <div className="button-row">
-                    <Button
-                      variant="secondary"
-                      type="button"
-                      disabled={!playableSegments.some((candidate) => candidate.id === segment.id)}
-                      title="Play the story from this segment onward"
-                      onClick={() => onPlayFromSegment(segment.id)}
-                    >
-                      <Play size={15} aria-hidden="true" />
-                    </Button>
-                    <Button
-                      variant="secondary"
-                      type="button"
-                      disabled={!canGenerate}
-                      title={canGenerate ? `Regenerate and verify segment ${segment.id} only` : 'Approve segments and assign voices first'}
-                      onClick={() => onStartJob('generate_verify_tts', [segment.id])}
-                    >
-                      <RefreshCw size={15} aria-hidden="true" />
-                      Regenerate
-                    </Button>
-                  </div>
-                ) : null}
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+          </TableHeader>
+          <TableBody>
+            {visibleSegments.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={8} className="label">
+                  No flagged segments.
+                </TableCell>
+              </TableRow>
+            ) : null}
+            {paddingTop > 0 ? (
+              <tr aria-hidden="true">
+                <td colSpan={8} style={{ height: paddingTop, padding: 0, border: 0 }} />
+              </tr>
+            ) : null}
+            {virtualItems.map((virtualItem) => {
+              const segment = visibleSegments[virtualItem.index];
+              if (!segment) {
+                return null;
+              }
+              return (
+                <AudioSegmentRow
+                  key={segment.id}
+                  data-index={virtualItem.index}
+                  ref={rowVirtualizer.measureElement}
+                  slug={slug}
+                  segment={segment}
+                  isPlaying={playingSegment?.id === segment.id}
+                  isPlayable={playableSegments.some((candidate) => candidate.id === segment.id)}
+                  isSelectedForRegen={regenSelection.has(segment.id)}
+                  canGenerate={canGenerate}
+                  onToggleRegenSelection={onToggleRegenSelection}
+                  onToggleSegmentFlag={onToggleSegmentFlag}
+                  onSelectSegmentTake={onSelectSegmentTake}
+                  onPlayFromSegment={onPlayFromSegment}
+                  onStartJob={onStartJob}
+                />
+              );
+            })}
+            {paddingBottom > 0 ? (
+              <tr aria-hidden="true">
+                <td colSpan={8} style={{ height: paddingBottom, padding: 0, border: 0 }} />
+              </tr>
+            ) : null}
+          </TableBody>
+        </Table>
+      </div>
     </Card>
   );
 };

@@ -45,11 +45,11 @@ export const StoryTab: React.FC<StoryTabProps> = ({
         {isDirty ? <Badge variant="warn">Unsaved changes</Badge> : null}
       </div>
       <Textarea
-        className="min-h-[560px]"
+        className="min-h-[70vh] resize-y"
         value={storyText}
         onChange={(event) => onChangeStoryText(event.target.value)}
       />
-      <div className="button-row">
+      <div className="button-row sticky bottom-0 z-10 -mx-[18px] -mb-[18px] border-t border-border bg-card px-[18px] py-3">
         <Button type="button" onClick={onSaveStory} disabled={isBusy}>
           <Save size={16} aria-hidden="true" />
           Save draft

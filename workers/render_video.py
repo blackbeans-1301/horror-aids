@@ -23,13 +23,13 @@ DEFAULT_VIDEO: dict[str, Any] = {
     "channels": 2,
     "referenceLufs": -16,
     "loudnorm": {"targetLufs": -16, "truePeakDb": -1.5, "loudnessRange": 11},
-    "introDurationMs": 10000,
+    "introDurationMs": 8000,
     "introZoomEnabled": True,
     "introZoomEndScale": 1.12,
     "leadInMs": 800,
     "tailOutMs": 4000,
     "transitionMs": 1000,
-    "grade": {"brightness": -0.05, "saturation": 0.85, "vignette": True},
+    "grade": {"brightness": -0.05, "saturation": 0.85, "vignette": False},
     "ducking": {"enabled": True, "threshold": 0.05, "ratio": 6, "attackMs": 50, "releaseMs": 1000},
     "defaultGainDb": {"introMusic": -3, "bgMusic": -22, "rainAmbience": -26},
 }
@@ -84,6 +84,24 @@ class RenderStopped(Exception):
     pass
 
 
+def format_hhmmss(seconds: float) -> str:
+    """Formats a duration in seconds as HH:MM:SS, matching ffmpeg's own
+    out_time display so progress lines don't mix two time formats."""
+    total = max(0, int(seconds))
+    hours, remainder = divmod(total, 3600)
+    minutes, secs = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+
+def parse_out_time(value: str) -> float | None:
+    """Parses ffmpeg's `-progress` out_time (HH:MM:SS.ffffff) into seconds."""
+    try:
+        hours, minutes, secs = value.strip().split(":")
+        return int(hours) * 3600 + int(minutes) * 60 + float(secs)
+    except (ValueError, AttributeError):
+        return None
+
+
 def run_ffmpeg_with_progress(command: list[str], total_sec: float, stderr_path: Path, ctx) -> None:
     """Run ffmpeg, logging progress at most every 5s and honoring a
     cooperative stop request. Raises RenderStopped if the operator stopped
@@ -92,6 +110,7 @@ def run_ffmpeg_with_progress(command: list[str], total_sec: float, stderr_path: 
     stderr_path.parent.mkdir(parents=True, exist_ok=True)
     with open(stderr_path, "w", encoding="utf-8") as stderr_file:
         process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=stderr_file, text=True, bufsize=1)
+        started_at = time.monotonic()
         last_log = 0.0
         try:
             while True:
@@ -121,8 +140,24 @@ def run_ffmpeg_with_progress(command: list[str], total_sec: float, stderr_path: 
                 if line.startswith("out_time="):
                     now = time.monotonic()
                     if now - last_log >= 5:
-                        out_time = line.split("=", 1)[1]
-                        ctx.log(f"render progress: {out_time} / {total_sec:.1f}s")
+                        out_time_sec = parse_out_time(line.split("=", 1)[1])
+                        if out_time_sec is not None:
+                            elapsed_sec = now - started_at
+                            percent = min(100.0, (out_time_sec / total_sec) * 100) if total_sec > 0 else 0.0
+                            # ETA from the actual render rate observed so far
+                            # (elapsed wall time / progress made), not a naive
+                            # elapsed/percent split — render speed varies a lot
+                            # between the intro, ducking passes, etc.
+                            if out_time_sec > 0:
+                                remaining_sec = max(0.0, total_sec - out_time_sec)
+                                eta_sec = (elapsed_sec / out_time_sec) * remaining_sec
+                                eta_str = format_hhmmss(eta_sec)
+                            else:
+                                eta_str = "--:--:--"
+                            ctx.log(
+                                f"render progress: {format_hhmmss(out_time_sec)} / {format_hhmmss(total_sec)} "
+                                f"({percent:.0f}%) · elapsed {format_hhmmss(elapsed_sec)} · ETA {eta_str}"
+                            )
                         last_log = now
         finally:
             if process.stdout:

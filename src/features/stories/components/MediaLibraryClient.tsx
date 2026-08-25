@@ -12,6 +12,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { NumberInput } from '@/components/ui/number-input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { mediaApi } from '@/features/stories/api/mediaApi';
@@ -255,11 +256,10 @@ const EditMediaModal: React.FC<EditMediaModalProps> = ({ asset, onClose, onSaved
                   ? ` — đo được ${asset.integratedLufs.toFixed(1)} LUFS`
                   : ' — chưa đo được loudness (dùng giá trị mặc định)'}
               </Label>
-              <Input
-                type="number"
+              <NumberInput
                 step={1}
                 value={defaultGainDb}
-                onChange={(event) => setDefaultGainDb(Number(event.target.value))}
+                onChange={(next) => setDefaultGainDb(next)}
                 disabled={isBusy}
               />
               <span className="text-xs uppercase tracking-wide text-muted-foreground normal-case">
@@ -305,13 +305,18 @@ const EditMediaModal: React.FC<EditMediaModalProps> = ({ asset, onClose, onSaved
   );
 };
 
+type CategoryFilter = MediaCategory | 'all';
+
 export const MediaLibraryClient: React.FC = () => {
   const [assets, setAssets] = useState<MediaAsset[]>([]);
   const [isBusy, setIsBusy] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingAsset, setEditingAsset] = useState<MediaAsset | null>(null);
+  const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>('all');
   const confirm = useConfirm();
   const videoGradeConfig = useVideoGradeConfig();
+
+  const visibleAssets = categoryFilter === 'all' ? assets : assets.filter((asset) => asset.category === categoryFilter);
 
   const refresh = useCallback(async (): Promise<void> => {
     try {
@@ -399,8 +404,31 @@ export const MediaLibraryClient: React.FC = () => {
         <Card>
           <div className="page-header">
             <h2>
-              <Clapperboard size={18} aria-hidden="true" /> Media ({assets.length})
+              <Clapperboard size={18} aria-hidden="true" /> Media ({visibleAssets.length})
             </h2>
+            <div className="tabs">
+              <Button
+                variant={categoryFilter === 'all' ? undefined : 'secondary'}
+                size="sm"
+                type="button"
+                onClick={() => setCategoryFilter('all')}
+              >
+                Tất cả
+                <Badge>{assets.length}</Badge>
+              </Button>
+              {CATEGORIES.map((cat) => (
+                <Button
+                  variant={categoryFilter === cat ? undefined : 'secondary'}
+                  size="sm"
+                  key={cat}
+                  type="button"
+                  onClick={() => setCategoryFilter(cat)}
+                >
+                  {CATEGORY_LABELS[cat]}
+                  <Badge>{assets.filter((asset) => asset.category === cat).length}</Badge>
+                </Button>
+              ))}
+            </div>
           </div>
           <Table>
             <TableHeader>
@@ -413,15 +441,16 @@ export const MediaLibraryClient: React.FC = () => {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {assets.length === 0 ? (
+              {visibleAssets.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={5} className="text-xs uppercase tracking-wide text-muted-foreground">
-                    No media yet — click &quot;Thêm media&quot; to add background music, rain, intro
-                    music, or scene video.
+                    {assets.length === 0
+                      ? 'No media yet — click "Thêm media" to add background music, rain, intro music, or scene video.'
+                      : 'No media in this category yet.'}
                   </TableCell>
                 </TableRow>
               ) : null}
-              {assets.map((asset) => (
+              {visibleAssets.map((asset) => (
                 <TableRow key={asset.id}>
                   <TableCell>
                     <Badge>{CATEGORY_LABELS[asset.category]}</Badge>

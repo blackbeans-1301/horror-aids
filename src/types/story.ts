@@ -197,6 +197,7 @@ export interface JobRecord {
   pid: number | null;
   startedAt: string;
   finishedAt: string | null;
+  confirmedAt: string | null;
   logPath: string;
   resultPath: string;
   command: string[];
