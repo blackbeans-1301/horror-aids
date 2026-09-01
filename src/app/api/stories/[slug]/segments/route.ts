@@ -63,6 +63,7 @@ function normalizePreviousTake(input: unknown): SegmentAudioTake | null {
     take: Number.isFinite(Number(record.take)) ? Number(record.take) : 1,
     createdAt: typeof record.createdAt === 'string' ? record.createdAt : null,
     verification: normalizeVerification(record.verification),
+    voice: typeof record.voice === 'string' ? record.voice : null,
   };
 }
 
@@ -125,6 +126,7 @@ function normalizeSegments(input: unknown): SegmentRecord[] {
         status,
         verification: normalizeVerification(record.verification),
         flagged: record.flagged === true,
+        audioVoice: typeof record.audioVoice === 'string' ? record.audioVoice : null,
       };
     })
     .filter((segment): segment is SegmentRecord => segment !== null);
@@ -178,6 +180,7 @@ export async function PUT(
         audioTake: prior.audioTake,
         audioCreatedAt: prior.audioCreatedAt,
         previousTake: prior.previousTake,
+        audioVoice: prior.audioVoice,
       };
     }
 

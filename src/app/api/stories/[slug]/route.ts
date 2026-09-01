@@ -1,7 +1,13 @@
 import { NextResponse } from 'next/server';
 
 import { pumpQueue } from '@/lib/job-runner';
-import { cleanupStoryTrash, deleteStoryPermanently, getStoryDetail, patchStory } from '@/lib/json-store';
+import {
+  cleanupStoryTrash,
+  clampAudioSpeed,
+  deleteStoryPermanently,
+  getStoryDetail,
+  patchStory,
+} from '@/lib/json-store';
 
 interface StoryRouteContext {
   params: Promise<{ slug: string }>;
@@ -11,6 +17,7 @@ interface PatchStoryPayload {
   title?: unknown;
   rightsStatus?: unknown;
   archived?: unknown;
+  audioSpeed?: unknown;
 }
 
 export async function GET(
@@ -59,6 +66,10 @@ export async function PATCH(
             ? new Date().toISOString()
             : null
           : current.archivedAt,
+      audio:
+        typeof body.audioSpeed === 'number' && Number.isFinite(body.audioSpeed)
+          ? { ...current.audio, speed: clampAudioSpeed(body.audioSpeed) }
+          : current.audio,
     }));
 
     // Archiving a story whose final video is already approved means every

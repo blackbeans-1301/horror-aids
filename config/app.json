@@ -64,7 +64,8 @@
     "defaultGainDb": { "introMusic": -3, "bgMusic": -22, "rainAmbience": -26 }
   },
   "youtubeMetadata": {
-    "model": "gpt-5.6-luna",
+    "baseUrl": "https://9router-home.bbns.site/v1",
+    "model": "ollama/gpt-oss:120b",
     "titleVariantCount": 5,
     "titleMaxChars": 100,
     "thumbnailPromptVariantCount": 2,

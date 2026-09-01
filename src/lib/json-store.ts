@@ -7,7 +7,7 @@ import path from 'node:path';
 
 import { probeIntegratedLufs, probeMediaMetadata } from '@/lib/media-probe';
 import { ALL_YOUTUBE_METADATA_FIELD_GROUPS, generateYoutubeMetadataFields } from '@/lib/openai-metadata';
-import { stripHighlightText } from '@/lib/thumbnail-prompt';
+import { stripHighlightText, stripUltraRealisticPrefix } from '@/lib/thumbnail-prompt';
 import { normalizeStoryText } from '@/lib/text-normalize';
 import { renderYoutubeDescription, slugifyForHashtag } from '@/lib/youtube-description';
 import {
@@ -475,6 +475,7 @@ export async function createStory(input: {
       segmentsDir: 'audio/segments',
       finalPath: 'audio/final.m4a',
       status: 'pending',
+      speed: 1,
     },
     video: {
       planPath: 'video/plan.json',
@@ -521,7 +522,7 @@ export async function createStory(input: {
     archivedAt: story.archivedAt,
     sourceContentId: story.sourceContentId,
   };
-  await writeStoryIndex({ stories: [entry, ...index.stories] });
+  await writeStoryIndex({ stories: [...index.stories, entry] });
 
   return story;
 }
@@ -544,6 +545,10 @@ export async function readStory(slug: string): Promise<StoryRecord> {
       ...story.approvals,
       finalVideo: story.approvals?.finalVideo ?? { status: 'pending', approvedAt: null },
       metadata: story.approvals?.metadata ?? { status: 'pending', approvedAt: null },
+    },
+    audio: {
+      ...story.audio,
+      speed: story.audio?.speed ?? 1,
     },
     video: story.video ?? {
       planPath: 'video/plan.json',
@@ -579,6 +584,15 @@ async function writeStory(story: StoryRecord): Promise<void> {
         : entry,
     ),
   });
+}
+
+// ffmpeg's atempo filter accepts 0.5–100.0 per instance, but concat_audio
+// also multiplies in the mastering pitch-preservation tempo factor before
+// calling atempo — keeping the user-facing range comfortably inside 0.5–2.0
+// leaves headroom so the combined factor can't drift outside what a single
+// atempo call supports.
+export function clampAudioSpeed(value: number): number {
+  return Math.min(2, Math.max(0.5, value));
 }
 
 export async function patchStory(
@@ -634,9 +648,21 @@ export async function writeCharacters(
 
 export async function readSegments(slug: string): Promise<SegmentsFile> {
   const story = await readStory(slug);
-  return readJsonFile<SegmentsFile>(resolveStoryPath(slug, story.text.segmentsPath), {
+  const file = await readJsonFile<SegmentsFile>(resolveStoryPath(slug, story.text.segmentsPath), {
     segments: [],
   });
+  // Legacy segments predate audioVoice (and previousTake.voice) — backfill so
+  // generate_verify_tts.py's voice-change detection and the workspace UI
+  // never see undefined.
+  return {
+    segments: file.segments.map((segment) => ({
+      ...segment,
+      audioVoice: segment.audioVoice ?? null,
+      previousTake: segment.previousTake
+        ? { ...segment.previousTake, voice: segment.previousTake.voice ?? null }
+        : null,
+    })),
+  };
 }
 
 export async function writeSegments(
@@ -761,6 +787,9 @@ export async function getStoryDetail(slug: string): Promise<StoryDetail> {
 
 export async function listStories(): Promise<StoryIndexEntry[]> {
   const index = await readStoryIndex();
+  // Order follows insertion order in the index (new stories are appended at
+  // the end) — never re-sorted by updatedAt, so a story's position doesn't
+  // jump around as its status changes.
   return index.stories
     // Entries created before the archive/library-import features shipped have no
     // archived/archivedAt/sourceContentId fields on disk.
@@ -769,8 +798,7 @@ export async function listStories(): Promise<StoryIndexEntry[]> {
       archived: entry.archived ?? false,
       archivedAt: entry.archivedAt ?? null,
       sourceContentId: entry.sourceContentId ?? null,
-    }))
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    }));
 }
 
 export async function writeWorkerResult(
@@ -850,6 +878,39 @@ export async function addVoice(name: string, wav: Buffer): Promise<VoiceRecord> 
     createdAt: new Date().toISOString(),
   };
   await writeJsonFile<VoicesFile>(voicesPath, { voices: [...voices.voices, voice] });
+  return voice;
+}
+
+// Swaps a voice's reference clip for a different WAV entirely, keeping the
+// same id/name/wavPath — every character already assigned to this voice
+// picks up the new clip on its next run, no reassignment needed. The old
+// clip is gone the moment this returns (data/voices is single-copy,
+// irreplaceable production content — this is the explicit, user-initiated
+// replace action, not something to call speculatively). The cached Whisper
+// transcript and any synthesized previews describe the old audio, so they're
+// invalidated here too.
+export async function replaceVoiceWav(id: string, wav: Buffer): Promise<VoiceRecord> {
+  const voices = await readVoices();
+  const voice = voices.voices.find((entry) => entry.id === id);
+  if (!voice) {
+    throw new Error(`Unknown voice: ${id}`);
+  }
+
+  await atomicWrite(path.join(voicesDir, `${id}.wav`), wav);
+
+  await fs.unlink(path.join(voicesDir, `${id}.ref.txt`)).catch((error) => {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      throw error;
+    }
+  });
+
+  const cachedPreviews = await fs.readdir(voicePreviewCacheRoot).catch(() => []);
+  await Promise.all(
+    cachedPreviews
+      .filter((entry) => entry.startsWith(`${id}__`))
+      .map((entry) => fs.unlink(path.join(voicePreviewCacheRoot, entry)).catch(() => undefined)),
+  );
+
   return voice;
 }
 
@@ -1490,7 +1551,6 @@ const DEFAULT_YOUTUBE_METADATA: YoutubeMetadataFile = {
   selectedTitleIndex: 0,
   teaser: '',
   tags: [],
-  category: '',
   thumbnailPrompts: [],
   pinnedComment: [],
   selectedPinnedCommentIndex: 0,
@@ -1500,8 +1560,8 @@ const DEFAULT_YOUTUBE_METADATA: YoutubeMetadataFile = {
 };
 
 // Upgrades on-disk shapes from before pinnedComment became a variant array
-// (and before contextHook was dropped) — the stray contextHook key, if
-// present, is simply absent from this type and gets dropped on next write.
+// (and before contextHook/category were dropped) — the stray keys are
+// explicitly discarded here so they don't survive the next write.
 function normalizeYoutubeMetadata(raw: YoutubeMetadataFile): YoutubeMetadataFile {
   const rawPinnedComment = (raw as unknown as { pinnedComment?: unknown }).pinnedComment;
   const pinnedComment = Array.isArray(rawPinnedComment)
@@ -1509,8 +1569,11 @@ function normalizeYoutubeMetadata(raw: YoutubeMetadataFile): YoutubeMetadataFile
     : typeof rawPinnedComment === 'string' && rawPinnedComment
       ? [rawPinnedComment]
       : [];
+  const rest = { ...raw } as YoutubeMetadataFile & { contextHook?: unknown; category?: unknown };
+  delete rest.contextHook;
+  delete rest.category;
   return {
-    ...raw,
+    ...rest,
     pinnedComment,
     selectedPinnedCommentIndex: raw.selectedPinnedCommentIndex ?? 0,
   };
@@ -1532,6 +1595,10 @@ async function writeYoutubeMetadataFile(
   return data;
 }
 
+function normalizeThumbnailPromptBody(prompt: string): string {
+  return stripUltraRealisticPrefix(stripHighlightText(prompt));
+}
+
 async function rerenderDescription(
   slug: string,
   fields: { titles: string[]; selectedTitleIndex: number; teaser: string },
@@ -1547,7 +1614,7 @@ async function rerenderDescription(
   return { storyHashtag, renderedDescription };
 }
 
-// Calls out to OpenAI for the story-specific fields (titles, teaser, tags,
+// Calls out to the metadata LLM for the story-specific fields (titles, teaser, tags,
 // thumbnail prompts, pinned comment). When `fieldGroups` is omitted/empty,
 // regenerates everything (a full first-generation or an explicit "generate
 // all" from the operator); otherwise only the requested groups are
@@ -1596,11 +1663,12 @@ export async function generateYoutubeMetadata(
   }
   if (fields.teaser !== undefined) merged.teaser = fields.teaser;
   if (fields.tags) merged.tags = fields.tags;
-  if (fields.category !== undefined) merged.category = fields.category;
-  // The highlight sentence is composed from the live selected title at copy
-  // time, so only the prompt body is persisted — drop the line if the model
-  // wrote one anyway.
-  if (fields.thumbnailPrompts) merged.thumbnailPrompts = fields.thumbnailPrompts.map(stripHighlightText);
+  // The "ultra realistic" lead-in and the highlight sentence are both
+  // composed at copy time (the latter from the live selected title), so only
+  // the prompt body is persisted — drop them if the model wrote them anyway.
+  if (fields.thumbnailPrompts) {
+    merged.thumbnailPrompts = fields.thumbnailPrompts.map(normalizeThumbnailPromptBody);
+  }
   if (fields.pinnedComment) {
     merged.pinnedComment = fields.pinnedComment;
     merged.selectedPinnedCommentIndex = 0;
@@ -1651,7 +1719,6 @@ export async function updateYoutubeMetadata(
       | 'selectedTitleIndex'
       | 'teaser'
       | 'tags'
-      | 'category'
       | 'thumbnailPrompts'
       | 'pinnedComment'
       | 'selectedPinnedCommentIndex'
@@ -1661,7 +1728,7 @@ export async function updateYoutubeMetadata(
   const current = await readYoutubeMetadataOrDefault(slug);
   const merged = { ...current, ...patch };
   if (patch.thumbnailPrompts) {
-    merged.thumbnailPrompts = patch.thumbnailPrompts.map(stripHighlightText);
+    merged.thumbnailPrompts = patch.thumbnailPrompts.map(normalizeThumbnailPromptBody);
   }
   const { storyHashtag, renderedDescription } = await rerenderDescription(slug, {
     titles: merged.titles,

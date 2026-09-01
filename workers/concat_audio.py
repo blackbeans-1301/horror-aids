@@ -68,6 +68,7 @@ def master_audio(
     input_wav: Path,
     output_path: Path,
     mastering: dict,
+    speed: float = 1.0,
 ) -> None:
     """Post-process the concatenated narration into a mastered M4A (AAC).
 
@@ -83,6 +84,11 @@ def master_audio(
     44.1kHz — the TTS output rate is already fine for narration) and applies
     triangular dither so the rate/bit-depth conversion doesn't leave flat,
     noise-free quantization patches in the spectrum.
+
+    `speed` is the user-facing playback speed multiplier (story.audio.speed,
+    default 1) folded into the same atempo call that already undoes the
+    asetrate tempo shift — atempo changes tempo without touching pitch, so
+    speeding narration up/down doesn't chipmunk or slow-motion the voice.
     """
     with wave.open(str(input_wav), "rb") as source:
         source_rate = source.getframerate()
@@ -92,7 +98,10 @@ def master_audio(
     dither_method = mastering["ditherMethod"]
     pitch_factor = 1.0 + float(mastering["pitchShiftPercent"]) / 100.0
     asetrate_hz = int(round(source_rate * pitch_factor))
-    tempo_factor = 1.0 / pitch_factor
+    # Clamped defensively even though the API layer already clamps
+    # story.audio.speed to [0.5, 2.0] — ffmpeg's atempo only accepts a single
+    # instance in [0.5, 100.0], and this combines speed with pitch_factor.
+    tempo_factor = max(0.5, min(100.0, speed / pitch_factor))
 
     eq = mastering["dynamicEq"]
     center_hz = float(eq["centerHz"])
@@ -210,10 +219,11 @@ def main() -> int:
 
     mastering = {**DEFAULT_MASTERING, **ctx.config().get("mastering", {})}
     mastering["dynamicEq"] = {**DEFAULT_MASTERING["dynamicEq"], **mastering.get("dynamicEq", {})}
+    speed = float(story.get("audio", {}).get("speed", 1.0) or 1.0)
 
     final_relative = "audio/final.m4a"
     output_path = ctx.resolve(final_relative)
-    master_audio(ctx, ffmpeg, raw_concat_path, output_path, mastering)
+    master_audio(ctx, ffmpeg, raw_concat_path, output_path, mastering, speed)
 
     if not output_path.exists() or output_path.stat().st_size == 0:
         raise RuntimeError("final m4a was not created")
@@ -226,7 +236,7 @@ def main() -> int:
     story["audio"]["status"] = "complete"
     story["approvals"]["finalAudio"] = {"status": "pending", "approvedAt": None}
     ctx.write_story(story)
-    ctx.result("complete", finalPath=final_relative, segments=len(input_paths))
+    ctx.result("complete", finalPath=final_relative, segments=len(input_paths), speed=speed)
     ctx.log(f"concat_audio complete: {output_path}")
     return 0
 

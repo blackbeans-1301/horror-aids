@@ -56,12 +56,14 @@ export async function PATCH(
           audioTake: previousTake.take,
           audioCreatedAt: previousTake.createdAt,
           verification: previousTake.verification,
+          audioVoice: previousTake.voice,
           status: swappedStatus,
           previousTake: {
             path: segment.audioPath,
             take: segment.audioTake,
             createdAt: segment.audioCreatedAt,
             verification: segment.verification,
+            voice: segment.audioVoice,
           },
         };
       }),

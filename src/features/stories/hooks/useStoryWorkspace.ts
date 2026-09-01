@@ -54,6 +54,7 @@ function createEmptySegment(order: number, speakerId = 'narrator'): SegmentRecor
       transcriptPreview: null,
     },
     flagged: false,
+    audioVoice: null,
   };
 }
 
@@ -65,6 +66,7 @@ export function useStoryWorkspace(slug: string) {
   const [characters, setCharacters] = useState<CharacterRecord[]>([]);
   const [segments, setSegments] = useState<SegmentRecord[]>([]);
   const [videoPlan, setVideoPlan] = useState<VideoPlanFile | null>(null);
+  const [audioSpeed, setAudioSpeed] = useState<number>(1);
   const [youtubeMetadata, setYoutubeMetadata] = useState<YoutubeMetadataFile | null>(null);
   const [selectedJobId, setSelectedJobId] = useState<string>('');
   const [jobLog, setJobLog] = useState<string>('');
@@ -77,6 +79,7 @@ export function useStoryWorkspace(slug: string) {
     segments: false,
     videoPlan: false,
     youtubeMetadata: false,
+    audioSpeed: false,
   });
   // Mirrors dirtyRef for the UI (refs don't trigger re-renders).
   const [dirty, setDirty] = useState({
@@ -85,8 +88,9 @@ export function useStoryWorkspace(slug: string) {
     segments: false,
     videoPlan: false,
     youtubeMetadata: false,
+    audioSpeed: false,
   });
-  type DirtyKey = 'story' | 'characters' | 'segments' | 'videoPlan' | 'youtubeMetadata';
+  type DirtyKey = 'story' | 'characters' | 'segments' | 'videoPlan' | 'youtubeMetadata' | 'audioSpeed';
   const markDirty = useCallback((key: DirtyKey): void => {
     dirtyRef.current[key] = true;
     setDirty((current) => ({ ...current, [key]: true }));
@@ -113,6 +117,9 @@ export function useStoryWorkspace(slug: string) {
       }
       if (!dirtyRef.current.videoPlan) {
         setVideoPlan(nextDetail.videoPlan);
+      }
+      if (!dirtyRef.current.audioSpeed) {
+        setAudioSpeed(nextDetail.story.audio.speed);
       }
       if (!dirtyRef.current.youtubeMetadata) {
         setYoutubeMetadata(nextDetail.youtubeMetadata);
@@ -411,6 +418,19 @@ export function useStoryWorkspace(slug: string) {
   const revealFinalAudio = useCallback(async (): Promise<void> => {
     await runAction(() => storiesApi.revealFinalAudio(slug));
   }, [runAction, slug]);
+
+  const updateAudioSpeed = useCallback((value: number): void => {
+    markDirty('audioSpeed');
+    setAudioSpeed(value);
+  }, [markDirty]);
+
+  const saveAudioSpeed = useCallback(async (): Promise<void> => {
+    await runAction(async () => {
+      const story = await storiesApi.setAudioSpeed(slug, audioSpeed);
+      setAudioSpeed(story.audio.speed);
+      clearDirty('audioSpeed');
+    }, 'Audio speed saved.');
+  }, [audioSpeed, clearDirty, runAction, slug]);
 
   const updateVideoPlan = useCallback((patch: Partial<VideoPlanFile>): void => {
     markDirty('videoPlan');
@@ -717,6 +737,7 @@ export function useStoryWorkspace(slug: string) {
     characters,
     segments,
     videoPlan,
+    audioSpeed,
     videoRenders: detail?.videoRenders ?? [],
     youtubeMetadata,
     selectedJobId,
@@ -758,6 +779,8 @@ export function useStoryWorkspace(slug: string) {
     confirmVerifiedAudio,
     approveFinalAudio,
     revealFinalAudio,
+    updateAudioSpeed,
+    saveAudioSpeed,
     updateVideoPlan,
     saveVideoPlan,
     randomizeVideoPlan,

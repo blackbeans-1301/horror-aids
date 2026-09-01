@@ -116,7 +116,7 @@ export const MetadataTab: React.FC<MetadataTabProps> = ({
         <div>
           <h2>YouTube Metadata</h2>
           <p>
-            AI điền phần riêng của truyện (tiêu đề, teaser, tags, thumbnail prompt) — phần khung
+            AI điền phần riêng của truyện (tiêu đề, đoạn giới thiệu trong description, tags, thumbnail prompt) — phần khung
             cố định của kênh (intro, disclaimer, CTA, email, copyright, hashtag thương hiệu) không
             bao giờ bị AI viết lại, xem/sửa ở <code>config/templates/youtube-description.txt</code>.
           </p>
@@ -183,23 +183,17 @@ export const MetadataTab: React.FC<MetadataTabProps> = ({
             </RadioGroup>
           </Card>
 
+          {/* The AI-written teaser is still generated — it's the one
+              story-specific paragraph inside the description template — but
+              it isn't shown as its own box: the rendered description below
+              already contains it, and two boxes read as duplicated output. */}
           <Card>
             <div className="page-header">
               <CardTitle>Description</CardTitle>
               <RegenerateButton
-                label="Regenerate teaser"
+                label="Regenerate description"
                 isBusy={isBusy}
                 onClick={() => onGenerateField('teaser')}
-              />
-            </div>
-            <div className="field">
-              <Label htmlFor="metadata-teaser">Teaser (không spoil kết truyện)</Label>
-              <Textarea
-                id="metadata-teaser"
-                rows={8}
-                value={metadata.teaser}
-                onChange={(event) => onUpdate({ teaser: event.target.value })}
-                disabled={isBusy}
               />
             </div>
             <div className="field">
@@ -215,11 +209,11 @@ export const MetadataTab: React.FC<MetadataTabProps> = ({
 
           <Card>
             <div className="page-header">
-              <CardTitle>Tags &amp; Category</CardTitle>
+              <CardTitle>Tags</CardTitle>
               <RegenerateButton
-                label="Regenerate tags & category"
+                label="Regenerate tags"
                 isBusy={isBusy}
-                onClick={() => onGenerateField('tagsAndCategory')}
+                onClick={() => onGenerateField('tags')}
               />
             </div>
             <div className="field">
@@ -241,16 +235,6 @@ export const MetadataTab: React.FC<MetadataTabProps> = ({
             </div>
             <div className="button-row">
               <CopyButton label="tags" value={metadata.tags.join(', ')} />
-            </div>
-            <div className="field">
-              <Label htmlFor="metadata-category">Category</Label>
-              <Input
-                id="metadata-category"
-                type="text"
-                value={metadata.category}
-                onChange={(event) => onUpdate({ category: event.target.value })}
-                disabled={isBusy}
-              />
             </div>
           </Card>
 

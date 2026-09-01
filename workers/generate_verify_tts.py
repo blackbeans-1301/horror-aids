@@ -224,6 +224,7 @@ def main() -> int:
             "previousTake": current_take,
             "previousCreatedAt": segment.get("audioCreatedAt"),
             "previousVerification": dict(segment.get("verification") or {}),
+            "previousVoice": segment.get("audioVoice"),
             "nextTake": current_take + 1,
             "nextPathRel": f"audio/segments/{stem}-t{current_take + 1}.wav",
             "committed": False,
@@ -231,7 +232,7 @@ def main() -> int:
         take_plans[segment["id"]] = plan
         return plan
 
-    def commit_take(segment: dict[str, Any], plan: dict[str, Any]) -> None:
+    def commit_take(segment: dict[str, Any], plan: dict[str, Any], voice: str) -> None:
         # Idempotent: pass 1 and pass 2 retries share one plan per segment, and
         # only the attempt that actually produced audio should promote it.
         if plan["committed"]:
@@ -254,11 +255,13 @@ def main() -> int:
                     "take": plan["previousTake"],
                     "createdAt": plan["previousCreatedAt"],
                     "verification": plan["previousVerification"],
+                    "voice": plan["previousVoice"],
                 }
 
         segment["audioPath"] = plan["nextPathRel"]
         segment["audioTake"] = plan["nextTake"]
         segment["audioCreatedAt"] = utc_now()
+        segment["audioVoice"] = voice
 
     for segment in segments_file["segments"]:
         if segment.get("status") == "skipped":
@@ -284,13 +287,40 @@ def main() -> int:
             # full run restart from segment 0001 every time. Use "Regenerate
             # selected" to force a specific segment that is already done.
             verified = segment.get("verification", {}).get("status") == "passed"
-            if verified and has_audio(segment):
+
+            # A segment is also NOT done if the voice currently assigned to its
+            # speaker no longer matches the voice its existing audio was
+            # generated with — otherwise reassigning a narrator/character voice
+            # after audio already exists would silently leave every already-
+            # verified segment on the old voice forever, since it would keep
+            # passing the has_audio()+verified check below. Segments generated
+            # before this field existed have audioVoice == None, which is
+            # treated as "unknown" rather than "changed" so an upgrade doesn't
+            # force a full re-synthesis of an entire existing story.
+            speaker_character = characters.get(segment["speakerId"])
+            current_voice = str((speaker_character or {}).get("voice", "")).strip()
+            recorded_voice = str(segment.get("audioVoice") or "").strip()
+            voice_changed = bool(recorded_voice) and recorded_voice != current_voice
+
+            if verified and has_audio(segment) and not voice_changed:
                 # Heal a status that re-approval rewrote, so the rest of the
                 # pipeline and the UI agree with the audio on disk.
                 segment["status"] = "complete"
                 updated_segments.append(segment)
                 continue
-            if verified:
+            if voice_changed:
+                ctx.log(
+                    f"segment {segment['id']} voice for speaker "
+                    f"{segment['speakerId']} changed ({recorded_voice} -> "
+                    f"{current_voice or 'unset'}); forcing regeneration"
+                )
+                segment["verification"] = {
+                    "status": "pending",
+                    "attempts": 0,
+                    "lastError": None,
+                    "transcriptPreview": None,
+                }
+            elif verified:
                 # Verification says passed but the audio is gone (deleted, or
                 # the speaker changed the path): this is a fresh generation, so
                 # don't let a stale attempt counter push it straight into
@@ -393,6 +423,9 @@ def main() -> int:
                     "previousTake": job_segment.get(
                         "previousTake", disk_segment.get("previousTake")
                     ),
+                    "audioVoice": job_segment.get(
+                        "audioVoice", disk_segment.get("audioVoice")
+                    ),
                 }
             )
         ctx.write_json(story["text"]["segmentsPath"], {"segments": merged})
@@ -426,7 +459,7 @@ def main() -> int:
                 character["voice"],
                 config,
             )
-            commit_take(segment, plan)
+            commit_take(segment, plan, character["voice"])
             generated_count += 1
             if not verify_enabled:
                 accept_without_verification(segment, attempts + 1)
@@ -492,7 +525,7 @@ def main() -> int:
                     character["voice"],
                     config,
                 )
-                commit_take(segment, plan)
+                commit_take(segment, plan, character["voice"])
                 generated_count += 1
                 if not verify_enabled:
                     accept_without_verification(segment, attempts)

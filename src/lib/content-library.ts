@@ -3,7 +3,8 @@ import 'server-only';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import { createStory, listStories, readJsonFile, writeJsonFile } from '@/lib/json-store';
+import { startStoryJob } from '@/lib/job-runner';
+import { createStory, generateYoutubeMetadata, listStories, readJsonFile, writeJsonFile } from '@/lib/json-store';
 import {
   assertValidContentId,
   contentLibraryStatusPath,
@@ -47,6 +48,16 @@ function deriveStatus(
     return editorial;
   }
   return linkedStory.archived ? 'archived' : 'processing';
+}
+
+// Base directory names are zero-padded up to "99" then unpadded from "100"
+// onward (e.g. "09_...", "10_...", "100_...", "101_..."), so plain string
+// comparison sorts "100_..." before "10_..." (the '_' byte is greater than
+// any digit). Sort by the leading numeric index instead so the list follows
+// directory index order, not lexicographic order.
+function contentIdSortKey(id: string): number {
+  const match = id.match(/^\d+/);
+  return match ? Number.parseInt(match[0], 10) : Number.POSITIVE_INFINITY;
 }
 
 function prettifyContentId(id: string): string {
@@ -236,7 +247,10 @@ export async function listContentStories(): Promise<ContentStoryEntry[]> {
     }),
   );
 
-  return result.sort((a, b) => a.id.localeCompare(b.id));
+  return result.sort((a, b) => {
+    const keyDiff = contentIdSortKey(a.id) - contentIdSortKey(b.id);
+    return keyDiff !== 0 ? keyDiff : a.id.localeCompare(b.id);
+  });
 }
 
 // Purely local — the submodule is a read-only data source from this app's
@@ -274,5 +288,14 @@ export async function importContentStory(id: string): Promise<{ slug: string }> 
     sourceType: 'library_import',
     sourceContentId: id,
   });
+
+  // A fresh import needs segmentation before TTS is possible, and its YouTube
+  // metadata only depends on title/storyText (not audio/video), so both can
+  // kick off immediately — the operator's one remaining manual step is
+  // "Generate + verify" once segments are approved. Best-effort: each already
+  // persists its own failure status, so there's nothing more to do here.
+  void startStoryJob(story.id, 'process_story').catch(() => {});
+  void generateYoutubeMetadata(story.id).catch(() => {});
+
   return { slug: story.id };
 }

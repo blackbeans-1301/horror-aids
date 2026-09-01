@@ -6,6 +6,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Card, CardTitle } from '@/components/ui/card';
+import { Label } from '@/components/ui/label';
+import { NumberInput } from '@/components/ui/number-input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { StoryPlayer } from '@/features/stories/components/workspace/StoryPlayer';
 import { assetUrl, segmentAudioPath } from '@/features/stories/utils/asset';
@@ -225,6 +227,11 @@ interface AudioTabProps {
   canConcat: boolean;
   finalAudioExists: boolean;
   finalAudioPath: string;
+  audioSpeed: number;
+  onUpdateAudioSpeed: (value: number) => void;
+  onSaveAudioSpeed: () => void;
+  isAudioSpeedDirty: boolean;
+  isBusy: boolean;
   regenSelection: Set<string>;
   onToggleRegenSelection: (segmentId: string) => void;
   onStartJob: (type: JobType, segmentIds?: string[]) => void;
@@ -250,6 +257,11 @@ export const AudioTab: React.FC<AudioTabProps> = ({
   canConcat,
   finalAudioExists,
   finalAudioPath,
+  audioSpeed,
+  onUpdateAudioSpeed,
+  onSaveAudioSpeed,
+  isAudioSpeedDirty,
+  isBusy,
   regenSelection,
   onToggleRegenSelection,
   onStartJob,
@@ -324,6 +336,31 @@ export const AudioTab: React.FC<AudioTabProps> = ({
         )}
       </Card>
 
+      <div className="button-row items-end">
+        <div className="grid gap-1.5">
+          <Label>Audio speed</Label>
+          <NumberInput
+            min={0.5}
+            max={2}
+            step={0.05}
+            value={audioSpeed}
+            onChange={onUpdateAudioSpeed}
+            disabled={isBusy}
+            style={{ width: 90 }}
+          />
+        </div>
+        <Button
+          variant="secondary"
+          type="button"
+          onClick={onSaveAudioSpeed}
+          disabled={isBusy || !isAudioSpeedDirty}
+          title="Save the speed used for the next concat"
+        >
+          <Check size={16} aria-hidden="true" />
+          Save speed
+        </Button>
+      </div>
+
       <div className="button-row">
         <Button
           variant="secondary"
@@ -345,7 +382,7 @@ export const AudioTab: React.FC<AudioTabProps> = ({
           disabled={!canConcat}
         >
           <Play size={16} aria-hidden="true" />
-          Concat final WAV
+          Concat final WAV ({audioSpeed}x)
         </Button>
         <Button type="button" onClick={onApproveFinalAudio} disabled={!finalAudioExists}>
           <Check size={16} aria-hidden="true" />

@@ -26,15 +26,23 @@ interface TtsConfig {
   device: string;
   devices: Array<{ id: string; label: string }>;
   sampleRate: number;
-  emotions: string[];
-  inlineCues: string[];
   voicesDir: string;
   verificationEnabled: boolean;
   characterSegmentationEnabled: boolean;
   ggufSteps: number;
   ggufStepsRange: { min: number; max: number; default: number };
-  notes: string;
   error?: string;
+}
+
+async function wavFileToBase64(file: File): Promise<string> {
+  const buffer = await file.arrayBuffer();
+  let binary = '';
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
 }
 
 export const SettingsClient: React.FC = () => {
@@ -52,7 +60,9 @@ export const SettingsClient: React.FC = () => {
   const [selectedCharacterSegmentationEnabled, setSelectedCharacterSegmentationEnabled] =
     useState<boolean>(true);
   const [selectedGgufSteps, setSelectedGgufSteps] = useState<number>(32);
+  const [replaceVoiceId, setReplaceVoiceId] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const replaceFileInputRef = useRef<HTMLInputElement | null>(null);
   const confirm = useConfirm();
 
   const refresh = useCallback(async (): Promise<void> => {
@@ -90,6 +100,19 @@ export const SettingsClient: React.FC = () => {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // Keep the replace-audio target selector pointed at a real voice — falls
+  // back to the first one once voices load, and re-picks if the previously
+  // selected voice is deleted.
+  useEffect(() => {
+    if (voices.length === 0) {
+      setReplaceVoiceId('');
+      return;
+    }
+    if (!voices.some((voice) => voice.id === replaceVoiceId)) {
+      setReplaceVoiceId(voices[0].id);
+    }
+  }, [voices, replaceVoiceId]);
 
   // Each settings panel applies (and is gated by) only its own fields — a
   // shared single dirty-flag/apply used to mean clicking Apply in any one
@@ -187,6 +210,55 @@ export const SettingsClient: React.FC = () => {
     }
   }, [postConfig, refresh, selectedCharacterSegmentationEnabled]);
 
+  const replaceVoiceAudio = useCallback(async (): Promise<void> => {
+    const voice = voices.find((entry) => entry.id === replaceVoiceId);
+    if (!voice) {
+      toast.error('Choose a voice to replace first.');
+      return;
+    }
+    const file = replaceFileInputRef.current?.files?.[0];
+    if (!file) {
+      toast.error('Choose a WAV file first.');
+      return;
+    }
+
+    const confirmed = await confirm({
+      title: 'Replace reference audio?',
+      description:
+        `Overwrite the reference clip for "${voice.description}" with this new WAV. The old ` +
+        'clip is gone permanently — there is no other copy. Any cached transcript/preview for ' +
+        'this voice is cleared so it regenerates from the new audio.',
+      confirmLabel: 'Replace',
+      danger: true,
+    });
+    if (!confirmed) {
+      return;
+    }
+
+    setIsBusy(true);
+    try {
+      const wavBase64 = await wavFileToBase64(file);
+      const response = await fetch(`/api/voices/${encodeURIComponent(replaceVoiceId)}`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ wavBase64 }),
+      });
+      const data = (await response.json()) as { id?: string; error?: string };
+      if (!response.ok) {
+        throw new Error(data.error ?? 'Could not replace voice audio');
+      }
+      toast.success(`Replaced reference audio for "${voice.description}".`);
+      if (replaceFileInputRef.current) {
+        replaceFileInputRef.current.value = '';
+      }
+      await refresh();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not replace voice audio');
+    } finally {
+      setIsBusy(false);
+    }
+  }, [confirm, refresh, replaceVoiceId, voices]);
+
   const uploadVoice = useCallback(async (): Promise<void> => {
     const file = fileInputRef.current?.files?.[0];
     if (!file) {
@@ -200,17 +272,11 @@ export const SettingsClient: React.FC = () => {
 
     setIsBusy(true);
     try {
-      const buffer = await file.arrayBuffer();
-      let binary = '';
-      const bytes = new Uint8Array(buffer);
-      const chunkSize = 0x8000;
-      for (let i = 0; i < bytes.length; i += chunkSize) {
-        binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
-      }
+      const wavBase64 = await wavFileToBase64(file);
       const response = await fetch('/api/voices', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ name: voiceName, wavBase64: btoa(binary) }),
+        body: JSON.stringify({ name: voiceName, wavBase64 }),
       });
       const data = (await response.json()) as { id?: string; error?: string };
       if (!response.ok) {
@@ -303,14 +369,6 @@ export const SettingsClient: React.FC = () => {
                   <Badge variant="good">{config.device}</Badge>
                   <Badge>{config.sampleRate / 1000} kHz</Badge>
                 </div>
-                <p>{config.notes}</p>
-                {config.emotions.length > 0 ? (
-                  <p>
-                    Emotions: {config.emotions.join(', ')} · Inline cues: {config.inlineCues.join(' ')}
-                  </p>
-                ) : (
-                  <p>This model has no emotion controls.</p>
-                )}
                 <div className="grid gap-1.5">
                   <Label>Model</Label>
                   <Select
@@ -486,6 +544,48 @@ export const SettingsClient: React.FC = () => {
             <Button type="button" onClick={() => void uploadVoice()} disabled={isBusy}>
               <Upload size={16} aria-hidden="true" />
               Upload and encode
+            </Button>
+          </Card>
+
+          <Card className="grid gap-3">
+            <div className="eyebrow">Voice Library</div>
+            <h2>Replace Reference Audio</h2>
+            <p>
+              Swap an existing voice&apos;s reference clip for a different WAV file. The voice
+              keeps its name — every character already assigned to it just picks up the new
+              clip. The old clip is gone permanently once you replace it.
+            </p>
+            <div className="grid gap-1.5">
+              <Label>Voice to replace</Label>
+              <Select
+                value={replaceVoiceId}
+                onValueChange={setReplaceVoiceId}
+                disabled={isBusy || voices.length === 0}
+              >
+                <SelectTrigger disabled={isBusy || voices.length === 0}>
+                  <SelectValue placeholder="No voices yet" />
+                </SelectTrigger>
+                <SelectContent>
+                  {voices.map((voice) => (
+                    <SelectItem key={voice.id} value={voice.id}>
+                      {voice.description}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-1.5">
+              <Label>New reference WAV</Label>
+              <Input type="file" accept=".wav,audio/wav" ref={replaceFileInputRef} />
+            </div>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => void replaceVoiceAudio()}
+              disabled={isBusy || voices.length === 0}
+            >
+              <Upload size={16} aria-hidden="true" />
+              Replace reference audio
             </Button>
           </Card>
         </section>

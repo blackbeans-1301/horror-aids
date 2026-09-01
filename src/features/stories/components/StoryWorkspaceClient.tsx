@@ -51,6 +51,7 @@ const tabs: Array<{ id: TabId; label: string; icon: React.ReactNode }> = [
 export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug }) => {
   const workspace = useStoryWorkspace(slug);
   const confirm = useConfirm();
+  const sourceContentId = workspace.detail?.story.sourceContentId ?? null;
   const {
     detail,
     loadError,
@@ -61,6 +62,7 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
     characters,
     segments,
     videoPlan,
+    audioSpeed,
     videoRenders,
     youtubeMetadata,
     selectedJob,
@@ -100,6 +102,8 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
     confirmVerifiedAudio,
     approveFinalAudio,
     revealFinalAudio,
+    updateAudioSpeed,
+    saveAudioSpeed,
     updateVideoPlan,
     saveVideoPlan,
     randomizeVideoPlan,
@@ -313,7 +317,7 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
             canGenerate={canGenerate}
             canConfirmVerified={canConfirmVerified}
             canConcat={canConcat}
-            sourceContentId={detail?.story.sourceContentId ?? null}
+            sourceContentId={sourceContentId}
             onSaveStory={() => void saveStory()}
             onStartJob={(type) => void handleStartJob(type)}
             onConfirmVerifiedAudio={() => void confirmVerifiedAudio()}
@@ -375,6 +379,11 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
             canConcat={canConcat}
             finalAudioExists={detail?.finalAudioExists ?? false}
             finalAudioPath={detail?.story.audio.finalPath ?? 'audio/final.m4a'}
+            audioSpeed={audioSpeed}
+            onUpdateAudioSpeed={updateAudioSpeed}
+            onSaveAudioSpeed={() => void saveAudioSpeed()}
+            isAudioSpeedDirty={dirty.audioSpeed}
+            isBusy={effectiveBusy}
             regenSelection={regenSelection}
             onToggleRegenSelection={toggleRegenSelection}
             onStartJob={(type, segmentIds) => void handleStartJob(type, segmentIds)}

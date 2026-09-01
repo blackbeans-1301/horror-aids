@@ -57,6 +57,7 @@ _PROGRESS_FIELDS = (
     "audioCreatedAt",
     "previousTake",
     "flagged",
+    "audioVoice",
 )
 
 # dp table cells (len(previous) * len(fresh)) above which the LCS alignment

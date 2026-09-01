@@ -74,6 +74,14 @@ export const storiesApi = {
     await requestJson(`/api/stories/${slug}`, { method: 'DELETE' });
   },
 
+  async setAudioSpeed(slug: string, speed: number): Promise<StoryRecord> {
+    const data = await requestJson<{ story: StoryRecord }>(`/api/stories/${slug}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ audioSpeed: speed }),
+    });
+    return data.story;
+  },
+
   async saveStoryText(slug: string, storyText: string): Promise<void> {
     await requestJson(`/api/stories/${slug}/story-text`, {
       method: 'PUT',
