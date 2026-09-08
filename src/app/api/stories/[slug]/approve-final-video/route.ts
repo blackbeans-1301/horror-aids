@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { getStoryDetail, setApproval } from '@/lib/json-store';
+import { uploadFinalVideoForStory } from '@/lib/youtube-upload';
 
 interface StoryRouteContext {
   params: Promise<{ slug: string }>;
@@ -21,5 +22,12 @@ export async function POST(
   }
 
   const story = await setApproval(slug, 'finalVideo', 'approved');
+
+  // Kick off the YouTube upload in the background — best-effort, failures
+  // are recorded on story.youtube (see uploadFinalVideoForStory) rather than
+  // surfaced here, so approving still succeeds even if YouTube isn't
+  // connected yet or the upload itself fails.
+  void uploadFinalVideoForStory(slug).catch(() => {});
+
   return NextResponse.json({ story });
 }

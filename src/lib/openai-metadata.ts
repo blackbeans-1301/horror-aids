@@ -219,6 +219,16 @@ function extractJsonObject(content: string): string {
   return candidate.slice(start, end + 1);
 }
 
+// The teaser's schema description tells the model to separate paragraphs
+// with "\n\n" — meant as a real-newline instruction, but some models (seen
+// with ollama/gpt-oss:120b) echo that notation back literally as the two
+// characters `\` + `n` instead of emitting an actual line break. JSON.parse
+// already turns a *properly* JSON-escaped "\n" into a real newline, so this
+// only fires when the model wrote the literal backslash-n itself.
+function normalizeEscapedNewlines(text: string): string {
+  return text.replace(/\\r\\n|\\n/g, '\n');
+}
+
 interface OpenAiChatCompletionChunk {
   choices: Array<{ delta?: { content?: string | null }; message?: { content?: string | null } }>;
 }
@@ -376,5 +386,10 @@ export async function generateYoutubeMetadataFields(input: {
     throw new Error(`${config.model} không trả về JSON hợp lệ ở cả hai chế độ response_format.`);
   }
 
-  return { ...result.parsed, model: config.model };
+  const parsed = result.parsed;
+  if (typeof parsed.teaser === 'string') {
+    parsed.teaser = normalizeEscapedNewlines(parsed.teaser);
+  }
+
+  return { ...parsed, model: config.model };
 }

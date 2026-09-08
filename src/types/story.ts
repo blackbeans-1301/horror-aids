@@ -138,6 +138,15 @@ export interface StoryRecord {
     path: string;
     status: 'pending' | 'generated' | 'failed';
   };
+  youtube: {
+    videoId: string | null;
+    // Private link (watch?v=... — private videos aren't publicly listed
+    // anyway, so there's no separate "unlisted" URL shape to track).
+    url: string | null;
+    status: 'pending' | 'uploading' | 'uploaded' | 'failed';
+    uploadedAt: string | null;
+    error: string | null;
+  };
 }
 
 export interface CharacterRecord {

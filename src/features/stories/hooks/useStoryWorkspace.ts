@@ -562,6 +562,12 @@ export function useStoryWorkspace(slug: string) {
     [clearDirty, runAction, slug],
   );
 
+  const uploadToYoutube = useCallback(async (): Promise<void> => {
+    await runAction(async () => {
+      await storiesApi.uploadToYoutube(slug);
+    }, 'Đã upload video lên YouTube (private).');
+  }, [runAction, slug]);
+
   const syncFromLibrary = useCallback(async (): Promise<void> => {
     await runAction(
       () => storiesApi.syncFromLibrary(slug),
@@ -794,6 +800,7 @@ export function useStoryWorkspace(slug: string) {
     deleteVideoRender,
     updateYoutubeMetadata,
     generateYoutubeMetadata,
+    uploadToYoutube,
     syncFromLibrary,
     loadJobLog,
     updateCharacter,

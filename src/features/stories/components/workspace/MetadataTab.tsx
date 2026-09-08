@@ -1,7 +1,8 @@
-import { Copy, RefreshCw, Sparkles, Trash2 } from 'lucide-react';
+import { Copy, RefreshCw, Sparkles, Trash2, Upload, Youtube } from 'lucide-react';
 import React from 'react';
 import { toast } from 'sonner';
 
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -9,16 +10,19 @@ import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Textarea } from '@/components/ui/textarea';
 import { composeThumbnailPrompt, highlightTextLine } from '@/lib/thumbnail-prompt';
-import type { YoutubeMetadataFieldGroup, YoutubeMetadataFile } from '@/types/story';
+import type { StoryRecord, YoutubeMetadataFieldGroup, YoutubeMetadataFile } from '@/types/story';
 
 interface MetadataTabProps {
   metadata: YoutubeMetadataFile | null;
   isDirty: boolean;
   isBusy: boolean;
   canGenerate: boolean;
+  youtube: StoryRecord['youtube'] | null;
+  finalVideoExists: boolean;
   onUpdate: (patch: Partial<YoutubeMetadataFile>) => void;
   onGenerate: () => void;
   onGenerateField: (field: YoutubeMetadataFieldGroup) => void;
+  onUploadToYoutube: () => void;
 }
 
 async function copyToClipboard(label: string, value: string): Promise<void> {
@@ -91,9 +95,12 @@ export const MetadataTab: React.FC<MetadataTabProps> = ({
   isDirty,
   isBusy,
   canGenerate,
+  youtube,
+  finalVideoExists,
   onUpdate,
   onGenerate,
   onGenerateField,
+  onUploadToYoutube,
 }) => {
   if (!metadata) {
     return (
@@ -133,6 +140,55 @@ export const MetadataTab: React.FC<MetadataTabProps> = ({
           <span className="label">Lỗi lần trước: {metadata.error}</span>
         ) : null}
       </div>
+
+      <Card>
+        <div className="page-header">
+          <CardTitle>
+            <Youtube size={16} aria-hidden="true" /> YouTube Upload
+          </CardTitle>
+          {youtube ? (
+            <Badge
+              variant={
+                youtube.status === 'uploaded'
+                  ? 'good'
+                  : youtube.status === 'failed'
+                    ? 'bad'
+                    : youtube.status === 'uploading'
+                      ? 'warn'
+                      : 'default'
+              }
+            >
+              {youtube.status}
+            </Badge>
+          ) : null}
+        </div>
+        <p className="label">
+          Tự động upload (chế độ Private, kèm ảnh intro làm thumbnail) ngay khi final video được
+          duyệt — không cần bấm gì thêm. Dùng nút dưới đây nếu cần upload lại thủ công.
+        </p>
+        {youtube?.status === 'failed' && youtube.error ? (
+          <p className="label">Lỗi lần trước: {youtube.error}</p>
+        ) : null}
+        {youtube?.url ? (
+          <p>
+            <a href={youtube.url} target="_blank" rel="noreferrer">
+              {youtube.url}
+            </a>
+          </p>
+        ) : null}
+        <div className="button-row">
+          <Button
+            variant="secondary"
+            type="button"
+            onClick={onUploadToYoutube}
+            disabled={isBusy || !finalVideoExists}
+            title={finalVideoExists ? undefined : 'Cần có final video đã duyệt trước'}
+          >
+            <Upload size={16} aria-hidden="true" />
+            {youtube?.status === 'uploaded' ? 'Upload lại' : 'Upload lên YouTube'}
+          </Button>
+        </div>
+      </Card>
 
       {isEmpty ? (
         <p className="label">Chưa có metadata — bấm &quot;Generate metadata&quot; ở trên.</p>

@@ -91,7 +91,7 @@ export const GradeOverrideEditor: React.FC<GradeOverrideEditorProps> = ({
           Override brightness
         </Label>
         <div className="grid gap-1.5">
-          <Label>Brightness (-1 đến 1, mặc định global -0.05)</Label>
+          <Label>Brightness (-1 đến 1, mặc định global 0 — tắt)</Label>
           <NumberInput
             step={0.01}
             min={-1}

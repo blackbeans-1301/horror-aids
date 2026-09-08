@@ -1,7 +1,8 @@
 'use client';
 
 import Link from 'next/link';
-import { Mic, Play, RefreshCw, Trash2, Upload } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { Mic, Play, RefreshCw, Trash2, Upload, Youtube } from 'lucide-react';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
@@ -64,6 +65,61 @@ export const SettingsClient: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const replaceFileInputRef = useRef<HTMLInputElement | null>(null);
   const confirm = useConfirm();
+  const router = useRouter();
+  const [youtubeStatus, setYoutubeStatus] = useState<{
+    connected: boolean;
+    channelTitle: string | null;
+  } | null>(null);
+  const [youtubeBusy, setYoutubeBusy] = useState<boolean>(false);
+
+  const refreshYoutubeStatus = useCallback(async (): Promise<void> => {
+    try {
+      const response = await fetch('/api/youtube/status');
+      const data = (await response.json()) as { connected: boolean; channelTitle: string | null };
+      setYoutubeStatus(data);
+    } catch {
+      setYoutubeStatus({ connected: false, channelTitle: null });
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshYoutubeStatus();
+  }, [refreshYoutubeStatus]);
+
+  // The OAuth callback redirects back here with ?youtube=connected|error —
+  // surface it once as a toast, then strip the query string so a page
+  // refresh doesn't replay it.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const result = params.get('youtube');
+    if (!result) {
+      return;
+    }
+    if (result === 'connected') {
+      toast.success('Đã kết nối tài khoản YouTube.');
+      void refreshYoutubeStatus();
+    } else {
+      toast.error(`Kết nối YouTube thất bại: ${params.get('youtubeError') ?? 'unknown error'}`);
+    }
+    router.replace('/settings');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const disconnectYoutubeAccount = useCallback(async (): Promise<void> => {
+    setYoutubeBusy(true);
+    try {
+      const response = await fetch('/api/youtube/disconnect', { method: 'POST' });
+      if (!response.ok) {
+        throw new Error('Disconnect failed');
+      }
+      toast.success('Đã ngắt kết nối YouTube.');
+      await refreshYoutubeStatus();
+    } catch {
+      toast.error('Không thể ngắt kết nối YouTube.');
+    } finally {
+      setYoutubeBusy(false);
+    }
+  }, [refreshYoutubeStatus]);
 
   const refresh = useCallback(async (): Promise<void> => {
     try {
@@ -519,6 +575,50 @@ export const SettingsClient: React.FC = () => {
               </>
             ) : (
               <p className="label">{configError || 'Loading...'}</p>
+            )}
+          </Card>
+
+          <Card className="grid gap-3">
+            <div className="eyebrow">Publishing</div>
+            <h2>YouTube</h2>
+            <p>
+              Khi final video được duyệt (thủ công hoặc tự động ngay sau khi render xong), app tự
+              động upload video lên YouTube ở chế độ <strong>Private</strong> — kèm ảnh intro của
+              story làm thumbnail. Bạn tự kiểm tra lại và public thủ công trên YouTube Studio.
+            </p>
+            {youtubeStatus?.connected ? (
+              <>
+                <Badge variant="good">
+                  Đã kết nối{youtubeStatus.channelTitle ? ` — ${youtubeStatus.channelTitle}` : ''}
+                </Badge>
+                <div className="button-row">
+                  <Button asChild variant="secondary">
+                    <a href="/api/youtube/oauth/start">
+                      <Youtube size={16} aria-hidden="true" />
+                      Kết nối lại / đổi kênh
+                    </a>
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    type="button"
+                    onClick={() => void disconnectYoutubeAccount()}
+                    disabled={youtubeBusy}
+                  >
+                    <Trash2 size={15} aria-hidden="true" />
+                    Ngắt kết nối
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <>
+                <Badge variant="warn">Chưa kết nối</Badge>
+                <Button asChild>
+                  <a href="/api/youtube/oauth/start">
+                    <Youtube size={16} aria-hidden="true" />
+                    Kết nối tài khoản YouTube
+                  </a>
+                </Button>
+              </>
             )}
           </Card>
 

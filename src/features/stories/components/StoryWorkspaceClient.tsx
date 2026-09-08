@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import {
+  ArrowRight,
   AudioLines,
   BarChart3,
   Clapperboard,
@@ -12,12 +13,13 @@ import {
   Users,
   Youtube,
 } from 'lucide-react';
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 
 import { useConfirm } from '@/components/ConfirmDialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { storiesApi } from '@/features/stories/api/storiesApi';
 import { AppShell } from '@/features/stories/components/AppShell';
 import { ActiveJobBanner } from '@/features/stories/components/workspace/ActiveJobBanner';
 import { AnalyticsTab } from '@/features/stories/components/workspace/AnalyticsTab';
@@ -29,6 +31,7 @@ import { OverviewTab } from '@/features/stories/components/workspace/OverviewTab
 import { SegmentsTab } from '@/features/stories/components/workspace/SegmentsTab';
 import { StoryTab } from '@/features/stories/components/workspace/StoryTab';
 import { VideoTab } from '@/features/stories/components/workspace/VideoTab';
+import { dashboardTabForStory, storiesInDashboardTab } from '@/features/stories/utils/dashboardTabs';
 import { type TabId, useStoryWorkspace } from '@/features/stories/hooks/useStoryWorkspace';
 import type { JobType } from '@/types/story';
 
@@ -117,6 +120,7 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
     deleteVideoRender,
     updateYoutubeMetadata,
     generateYoutubeMetadata,
+    uploadToYoutube,
     syncFromLibrary,
     loadJobLog,
     updateCharacter,
@@ -141,6 +145,40 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Next story within the same dashboard bucket (Active / Verified Audio /
+  // Verified Video / Archived) this story currently falls into — recomputed
+  // from live status rather than from wherever the operator clicked in from,
+  // so approving something here that moves the story to a different bucket
+  // is reflected immediately. undefined = still loading, null = no other
+  // story in this bucket to go to.
+  const [nextStorySlug, setNextStorySlug] = useState<string | null | undefined>(undefined);
+  const storyStatus = detail?.story.status;
+  const storyArchived = detail?.story.archived;
+  useEffect(() => {
+    if (storyStatus === undefined || storyArchived === undefined) {
+      return;
+    }
+    let cancelled = false;
+    void storiesApi.list().then((allStories) => {
+      if (cancelled) {
+        return;
+      }
+      const bucket = storiesInDashboardTab(
+        allStories,
+        dashboardTabForStory({ status: storyStatus, archived: storyArchived }),
+      );
+      const currentIndex = bucket.findIndex((story) => story.id === slug);
+      if (currentIndex === -1 || bucket.length <= 1) {
+        setNextStorySlug(null);
+        return;
+      }
+      setNextStorySlug(bucket[(currentIndex + 1) % bucket.length].id);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [slug, storyArchived, storyStatus]);
 
   // Save/Process/Generate are already gated server-side for archived
   // stories; fold the same guard into the shared busy flag so the buttons
@@ -261,9 +299,24 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
             </p>
           </div>
           <div className="button-row">
-            <Button asChild variant="secondary">
-              <Link href="/">Back</Link>
-            </Button>
+            {nextStorySlug ? (
+              <Button asChild variant="secondary">
+                <Link href={`/stories/${nextStorySlug}`}>
+                  Next story
+                  <ArrowRight size={16} aria-hidden="true" />
+                </Link>
+              </Button>
+            ) : (
+              <Button
+                variant="secondary"
+                type="button"
+                disabled
+                title="No other story in this status right now"
+              >
+                Next story
+                <ArrowRight size={16} aria-hidden="true" />
+              </Button>
+            )}
           </div>
         </div>
 
@@ -433,9 +486,12 @@ export const StoryWorkspaceClient: React.FC<StoryWorkspaceClientProps> = ({ slug
             isDirty={dirty.youtubeMetadata}
             isBusy={effectiveBusy}
             canGenerate={canGenerateMetadata}
+            youtube={detail?.story.youtube ?? null}
+            finalVideoExists={detail?.finalVideoExists ?? false}
             onUpdate={updateYoutubeMetadata}
             onGenerate={() => void generateYoutubeMetadata()}
             onGenerateField={(field) => void generateYoutubeMetadata([field])}
+            onUploadToYoutube={() => void uploadToYoutube()}
           />
         ) : null}
 

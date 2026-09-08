@@ -15,10 +15,9 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { storiesApi } from '@/features/stories/api/storiesApi';
 import { AppShell } from '@/features/stories/components/AppShell';
+import { type DashboardTab, storiesInDashboardTab } from '@/features/stories/utils/dashboardTabs';
 import { readStoryFilesAsText } from '@/features/stories/utils/readStoryFiles';
 import type { StoryIndexEntry } from '@/types/story';
-
-type DashboardTab = 'active' | 'verified_audio' | 'verified_video' | 'archived';
 
 const DASHBOARD_TABS: Array<{ id: DashboardTab; label: string; icon: React.ReactNode }> = [
   { id: 'active', label: 'Active', icon: <ListChecks size={14} aria-hidden="true" /> },
@@ -158,26 +157,7 @@ export const DashboardClient: React.FC = () => {
   // pipeline has gone: still in progress, audio done but video not yet
   // approved, or fully done (video approved — metadata approval afterward
   // keeps it here, it doesn't regress the story back to "in progress").
-  const byTab = (tab: DashboardTab): StoryIndexEntry[] =>
-    stories.filter((story) => {
-      if (tab === 'archived') {
-        return story.archived;
-      }
-      if (story.archived) {
-        return false;
-      }
-      if (tab === 'verified_video') {
-        return story.status === 'video_complete' || story.status === 'metadata_ready';
-      }
-      if (tab === 'verified_audio') {
-        return story.status === 'audio_complete';
-      }
-      return (
-        story.status !== 'video_complete' &&
-        story.status !== 'metadata_ready' &&
-        story.status !== 'audio_complete'
-      );
-    });
+  const byTab = (tab: DashboardTab): StoryIndexEntry[] => storiesInDashboardTab(stories, tab);
 
   const visibleStories = byTab(activeTab);
   const emptyLabel =

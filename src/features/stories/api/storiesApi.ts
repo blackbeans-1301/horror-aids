@@ -268,4 +268,11 @@ export const storiesApi = {
     return data.metadata;
   },
 
+  async uploadToYoutube(slug: string): Promise<StoryRecord> {
+    const data = await requestJson<{ story: StoryRecord }>(`/api/stories/${slug}/youtube/upload`, {
+      method: 'POST',
+    });
+    return data.story;
+  },
+
 };

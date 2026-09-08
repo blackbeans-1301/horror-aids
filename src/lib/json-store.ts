@@ -488,6 +488,13 @@ export async function createStory(input: {
       path: 'metadata/youtube.json',
       status: 'pending',
     },
+    youtube: {
+      videoId: null,
+      url: null,
+      status: 'pending',
+      uploadedAt: null,
+      error: null,
+    },
   };
 
   await writeJsonFile(resolveStoryPath(slug, 'story.json'), story);
@@ -560,6 +567,13 @@ export async function readStory(slug: string): Promise<StoryRecord> {
     metadata: story.metadata ?? {
       path: 'metadata/youtube.json',
       status: 'pending',
+    },
+    youtube: story.youtube ?? {
+      videoId: null,
+      url: null,
+      status: 'pending',
+      uploadedAt: null,
+      error: null,
     },
   };
 }
@@ -704,6 +718,7 @@ export async function writeStoryText(slug: string, storyText: string): Promise<v
     },
     audio: { ...current.audio, status: 'pending' },
     video: { ...current.video, status: 'pending' },
+    youtube: { ...current.youtube, status: 'pending', error: null },
   }));
 }
 
@@ -1457,6 +1472,7 @@ export async function selectVideoRender(slug: string, jobId: string): Promise<St
       ...story.approvals,
       finalVideo: { status: 'pending', approvedAt: null },
     },
+    youtube: { ...story.youtube, status: 'pending', error: null },
   }));
 }
 
@@ -1495,6 +1511,7 @@ export async function deleteVideoRender(slug: string, jobId: string): Promise<vo
         ...current.approvals,
         finalVideo: { status: 'pending', approvedAt: null },
       },
+      youtube: { ...current.youtube, status: 'pending', error: null },
     }));
   }
 }
@@ -1658,8 +1675,11 @@ export async function generateYoutubeMetadata(
 
   const merged: YoutubeMetadataFile = { ...current };
   if (fields.titles) {
-    merged.titles = fields.titles;
-    merged.selectedTitleIndex = 0;
+    // Titles are kept for A/B testing rather than replaced — a regenerate
+    // appends fresh variants to whatever survived past edits/deletions
+    // instead of clobbering them. selectedTitleIndex is left alone since the
+    // existing options don't move.
+    merged.titles = [...current.titles, ...fields.titles];
   }
   if (fields.teaser !== undefined) merged.teaser = fields.teaser;
   if (fields.tags) merged.tags = fields.tags;

@@ -17,12 +17,15 @@ import {
   readStoryText,
   readVideoPlanOrDefaults,
   resolveMediaAssetFile,
+  setApproval,
+  syncVideoPlanGainToLibraryDefaults,
   updateJob,
   withJobsLock,
   writeJobs,
   writeTextFile,
 } from '@/lib/json-store';
 import { normalizeStoryText } from '@/lib/text-normalize';
+import { uploadFinalVideoForStory } from '@/lib/youtube-upload';
 import type { JobRecord, JobType, MediaCategory } from '@/types/story';
 
 const workerScripts: Record<JobType, string> = {
@@ -229,6 +232,28 @@ function segmentIdsFromCommand(command: string[]): string[] | undefined {
   return command[flagIndex + 1]?.split(',').filter(Boolean);
 }
 
+// concat_audio and render_video used to require a separate manual "Approve
+// final audio"/"Approve final video" click after they finished — the
+// operator asked for that click to happen automatically once the worker
+// actually succeeds, since it was a redundant confirmation of a result
+// already just produced. Best-effort: if this fails, the tab's own approve
+// button is still there as a manual fallback.
+async function autoApproveAfterJob(job: JobRecord): Promise<void> {
+  try {
+    if (job.type === 'concat_audio') {
+      await syncVideoPlanGainToLibraryDefaults(job.storyId);
+      await setApproval(job.storyId, 'finalAudio', 'approved');
+    } else if (job.type === 'render_video') {
+      await setApproval(job.storyId, 'finalVideo', 'approved');
+      // Best-effort, same as the manual approve-final-video route: failures
+      // land on story.youtube for the operator to retry from the Metadata tab.
+      await uploadFinalVideoForStory(job.storyId).catch(() => {});
+    }
+  } catch {
+    // ignore — see comment above.
+  }
+}
+
 async function launchJob(job: JobRecord): Promise<JobRecord> {
   // Re-validate at launch, not just at enqueue: a job can sit in the queue for
   // hours, and in the meantime the user may have edited segments (which resets
@@ -301,6 +326,9 @@ async function launchJob(job: JobRecord): Promise<JobRecord> {
         finishedAt: new Date().toISOString(),
         error: status === 'failed' ? `Worker exited with code ${code ?? 'unknown'}` : null,
       });
+      if (status === 'complete') {
+        await autoApproveAfterJob(job);
+      }
       // A slot just freed up — hand it to whatever is waiting.
       void pumpQueue();
     })();

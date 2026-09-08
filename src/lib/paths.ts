@@ -8,6 +8,12 @@ export const workersRoot = path.join(projectRoot, 'workers');
 export const configRoot = path.join(projectRoot, 'config');
 export const voicePreviewCacheRoot = path.join(dataRoot, 'voice-preview-cache');
 
+// The one credential file for the YouTube auto-upload feature — a Google
+// OAuth refresh token for whichever channel the operator connected in
+// Settings. Lives under data/ (gitignored wholesale) alongside every other
+// local secret/runtime file this app keeps, never checked into git.
+export const youtubeTokenPath = path.join(dataRoot, 'youtube-oauth-tokens.json');
+
 // Shared media catalog (background music, rain ambience, intro music, scene
 // video) used by the video-assembly stage — nowhere else joins 'data' and
 // 'media' directly, so this is the one place a future workspace-isolation

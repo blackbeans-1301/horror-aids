@@ -59,7 +59,7 @@
     "leadInMs": 800,
     "tailOutMs": 4000,
     "transitionMs": 1000,
-    "grade": { "brightness": -0.05, "saturation": 0.85, "vignette": false },
+    "grade": { "brightness": 0, "saturation": 0.85, "vignette": false },
     "ducking": { "enabled": true, "threshold": 0.05, "ratio": 6, "attackMs": 50, "releaseMs": 1000 },
     "defaultGainDb": { "introMusic": -3, "bgMusic": -22, "rainAmbience": -26 }
   },
