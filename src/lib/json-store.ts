@@ -1068,6 +1068,7 @@ export async function addMediaAsset(input: {
       category: base.category,
       integratedLufs: null,
       defaultGainDb: config.defaultGainDb[gainKey],
+      hasAudioStream: probe.hasAudioStream,
     } satisfies AudioMediaAsset;
   }
 
@@ -1548,7 +1549,7 @@ export async function cleanupStoryTrash(slug: string): Promise<void> {
   await writeSegments(slug, { segments: cleaned });
 }
 
-// --- YouTube upload metadata — a lightweight (non-job) OpenAI structured-
+// --- YouTube upload metadata — a lightweight (non-job) OpenRouter structured-
 // outputs call, generated once the final video is approved, then edited/
 // approved by the operator. See VideoAssembly-adjacent design notes for why
 // this is a direct API-route call rather than a job-runner worker: it's one
@@ -1636,7 +1637,7 @@ async function rerenderDescription(
 // regenerates everything (a full first-generation or an explicit "generate
 // all" from the operator); otherwise only the requested groups are
 // regenerated and merged into the existing file, leaving every other field
-// untouched. A failed OpenAI call is recorded on the metadata file (status
+// untouched. A failed OpenRouter call is recorded on the metadata file (status
 // 'failed' + error) rather than left silently unresolved, so the UI can show
 // why generation didn't produce anything.
 export async function generateYoutubeMetadata(
@@ -1661,7 +1662,7 @@ export async function generateYoutubeMetadata(
     const failed: YoutubeMetadataFile = {
       ...current,
       status: 'failed',
-      error: error instanceof Error ? error.message : 'OpenAI request failed',
+      error: error instanceof Error ? error.message : 'OpenRouter request failed',
     };
     await writeYoutubeMetadataFile(slug, failed);
     await patchStory(slug, (currentStory) => ({

@@ -64,8 +64,10 @@
     "defaultGainDb": { "introMusic": -3, "bgMusic": -22, "rainAmbience": -26 }
   },
   "youtubeMetadata": {
-    "baseUrl": "https://9router-home.bbns.site/v1",
-    "model": "ollama/gpt-oss:120b",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "model": "openai/gpt-6-luna",
+    "providerOnly": ["openai/flex"],
+    "allowFallbacks": false,
     "titleVariantCount": 5,
     "titleMaxChars": 100,
     "thumbnailPromptVariantCount": 2,

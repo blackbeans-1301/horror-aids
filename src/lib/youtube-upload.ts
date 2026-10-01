@@ -158,7 +158,11 @@ export async function uploadFinalVideoForStory(slug: string): Promise<void> {
     const thumbnailPath = videoPlan.introImagePath
       ? resolveStoryPath(slug, videoPlan.introImagePath)
       : null;
-    const title = metadata.titles[metadata.selectedTitleIndex] ?? metadata.titles[0] ?? story.title;
+    const baseTitle = metadata.titles[metadata.selectedTitleIndex] ?? metadata.titles[0] ?? story.title;
+    const seoSuffix = ' | truyện nosleep';
+    const title = baseTitle.toLowerCase().includes('nosleep')
+      ? baseTitle
+      : `${baseTitle.slice(0, 100 - seoSuffix.length)}${seoSuffix}`;
     const description = metadata.renderedDescription || story.title;
 
     const auth = await getAuthorizedClient();

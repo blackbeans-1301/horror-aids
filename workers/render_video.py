@@ -69,6 +69,34 @@ def probe_duration_seconds(ffprobe: str, path: Path) -> float:
         raise RuntimeError(f"ffprobe returned no duration for {path}") from exc
 
 
+# The media library's manifest.json may not have hasAudioStream recorded for
+# an audio-category asset (added before that field existed, or the file is
+# actually a video with no audio track uploaded into bg_music/rain_ambience/
+# intro_music — nothing rejects that on ingest). Re-checking here with
+# ffprobe, right before the file's audio stream gets wired into the filter
+# graph, means a music/ambience/intro slot pointed at a silent file never
+# crashes the render — it's just treated as if that slot were unset.
+def probe_has_audio_stream(ffprobe: str, path: Path) -> bool:
+    completed = subprocess.run(
+        [
+            ffprobe,
+            "-v",
+            "error",
+            "-select_streams",
+            "a",
+            "-show_entries",
+            "stream=codec_type",
+            "-of",
+            "csv=p=0",
+            str(path),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    return completed.returncode == 0 and "audio" in completed.stdout
+
+
 def compute_gain_db(entry: dict[str, Any] | None, plan_gain_db: float, reference_lufs: float) -> float:
     """Static catalog normalization: makes plan_gain_db mean the same loudness
     offset for every asset regardless of its own recorded level. Falls back to
@@ -220,6 +248,16 @@ def render(ctx) -> int:
         ctx.log(f"scene video {scene_video['id']} has an audio stream; ignored")
     if scene_video.get("loopable") is False:
         ctx.log(f"scene video {scene_video['id']} is not marked loopable; loop seams may be visible")
+
+    if bg_music and not probe_has_audio_stream(ffprobe, project_root / bg_music["path"]):
+        ctx.log(f"background music {bg_music['id']} has no audio stream; skipping music bed")
+        bg_music = None
+    if rain_ambience and not probe_has_audio_stream(ffprobe, project_root / rain_ambience["path"]):
+        ctx.log(f"rain ambience {rain_ambience['id']} has no audio stream; skipping rain bed")
+        rain_ambience = None
+    if intro_music and not probe_has_audio_stream(ffprobe, project_root / intro_music["path"]):
+        ctx.log(f"intro music {intro_music['id']} has no audio stream; using silence for intro")
+        intro_music = None
 
     narration_sec = probe_duration_seconds(ffprobe, narration_path)
     # Frame-align the intro so the concat seam lands on a frame boundary —

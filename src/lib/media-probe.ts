@@ -83,7 +83,7 @@ export async function probeMediaMetadata(
     width: category === 'scene_video' ? videoStream?.width ?? null : null,
     height: category === 'scene_video' ? videoStream?.height ?? null : null,
     fps: category === 'scene_video' ? parseFrameRate(videoStream?.r_frame_rate) : null,
-    hasAudioStream: category === 'scene_video' ? Boolean(audioStream) : false,
+    hasAudioStream: Boolean(audioStream),
   };
 }
 

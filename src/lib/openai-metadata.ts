@@ -3,6 +3,15 @@ import 'server-only';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+import { OpenRouter } from '@openrouter/sdk';
+import type {
+  ChatMessages,
+  ChatResult,
+  ProviderPreferences,
+  ResponseFormat,
+} from '@openrouter/sdk/models';
+import { OpenRouterError } from '@openrouter/sdk/models/errors';
+
 import { configRoot } from '@/lib/paths';
 import type { YoutubeMetadataFieldGroup } from '@/types/story';
 
@@ -26,6 +35,12 @@ export const ALL_YOUTUBE_METADATA_FIELD_GROUPS: YoutubeMetadataFieldGroup[] = [
 interface YoutubeMetadataAppConfig {
   baseUrl?: string;
   model?: string;
+  // OpenRouter provider routing (see https://openrouter.ai/docs/provider-routing).
+  // `providerOnly` pins the request to specific provider slugs; `allowFallbacks:
+  // false` makes the request fail instead of silently routing elsewhere, which
+  // keeps cost/latency predictable for a single-operator tool.
+  providerOnly?: string[];
+  allowFallbacks?: boolean;
   titleVariantCount?: number;
   titleMaxChars?: number;
   thumbnailPromptVariantCount?: number;
@@ -36,10 +51,12 @@ interface YoutubeMetadataAppConfig {
 }
 
 const DEFAULT_CONFIG: Required<YoutubeMetadataAppConfig> = {
-  // OpenAI-compatible router (see `.env.local` / config/app.json) — not
-  // api.openai.com. Any endpoint speaking /chat/completions works.
-  baseUrl: 'https://9router-home.bbns.site/v1',
-  model: 'ollama/minimax-m3',
+  // OpenRouter's OpenAI-compatible gateway (see `.env.local` / config/app.json).
+  // Model ids are `vendor/model` slugs from https://openrouter.ai/models.
+  baseUrl: 'https://openrouter.ai/api/v1',
+  model: 'openai/gpt-6-luna',
+  providerOnly: ['openai/flex'],
+  allowFallbacks: false,
   titleVariantCount: 5,
   titleMaxChars: 100,
   thumbnailPromptVariantCount: 2,
@@ -82,10 +99,6 @@ function truncateStoryText(storyText: string): string {
   return `${head}\n\n[... đoạn giữa truyện được lược bớt để vừa giới hạn ...]\n\n${tail}`;
 }
 
-interface OpenAiChatCompletionResponse {
-  choices: Array<{ message: { content: string | null } }>;
-}
-
 interface SchemaProperty {
   [key: string]: unknown;
 }
@@ -105,17 +118,32 @@ function buildFieldGroupSchema(
             maxItems: config.titleVariantCount,
             description:
               `${config.titleVariantCount} phương án tiêu đề tiếng Việt khác nhau, mỗi tiêu đề tối đa ` +
-              `${config.titleMaxChars} ký tự. QUAN TRỌNG NHẤT: tiêu đề phải GIẬT GÂN, gây tò mò, ` +
-              'khiến người lướt YouTube phải bấm vào — TUYỆT ĐỐI không được viết kiểu tóm tắt nội dung ' +
-              'truyện hay đặt tên truyện chung chung. Hãy viết như một lời cảnh báo, một bộ quy tắc lạ, ' +
-              'một mệnh đề dở dang, hoặc một câu kể ở ngôi thứ nhất với chi tiết cụ thể (giờ giấc, địa ' +
-              'điểm, con số) khiến người đọc phải hỏi "rồi sao nữa?". Ví dụ đúng tinh thần cần đạt: ' +
-              '"Bộ quy tắc khi mắc kẹt ở ký túc xá", "Đừng tin vào những quy tắc tìm thấy trong trạm ' +
-              'kiểm lâm", "Tôi thức dậy lúc 1:20 sáng trên một chuyến tàu không có điểm đến". Ví dụ SAI ' +
-              '(kiểu tóm tắt, nhạt, không được viết như vậy): "Câu chuyện về ngôi nhà hoang bí ẩn", ' +
-              '"Truyện ma: Người phụ nữ áo trắng". Bám vào chi tiết có thật trong truyện chứ không bịa ' +
-              'chi tiết mới, và TUYỆT ĐỐI không spoil đoạn kết hay lời giải bí ẩn. Mỗi phương án phải ' +
-              'khác nhau rõ rệt về góc câu kéo (hook), không phải 5 biến thể chữ nghĩa của cùng một câu.',
+              `${config.titleMaxChars} ký tự. QUAN TRỌNG NHẤT: tiêu đề phải GIẬT GÂN, gây tò mò, khiến ` +
+              'người lướt YouTube phải dừng lại bấm vào — nhưng đọc lên phải NGHE TỰ NHIÊN như lời một ' +
+              'người thật đang kể lại chuyện của chính họ, TUYỆT ĐỐI không phải văn phong clickbait sáo ' +
+              'rỗng kiểu marketing ("bạn sẽ không tin...", "sự thật kinh hoàng đằng sau...", "điều không ' +
+              'ai dám kể..."). Cũng TUYỆT ĐỐI không viết kiểu tóm tắt nội dung truyện hay đặt tên chung ' +
+              'chung ("Câu chuyện về ngôi nhà hoang bí ẩn", "Truyện ma: Người phụ nữ áo trắng").\n\n' +
+              'Mỗi tiêu đề phải bám vào MỘT chi tiết có thật, cụ thể trong truyện (tên riêng, địa điểm, ' +
+              'câu thoại, đồ vật, con số, nghề nghiệp, mối quan hệ...) — không bịa thêm chi tiết mới, và ' +
+              'TUYỆT ĐỐI không spoil đoạn kết hay lời giải bí ẩn.\n\n' +
+              `${config.titleVariantCount} phương án PHẢI dùng ${config.titleVariantCount} KIỂU HOOK khác ` +
+              'nhau rõ rệt, không phải 5 biến thể chữ nghĩa của cùng một câu. Chọn trong các kiểu sau (hoặc ' +
+              'tương đương), mỗi kiểu dùng tối đa 1 lần — và đừng mặc định lạm dụng kiểu "bộ quy tắc" hay ' +
+              '"tôi thức dậy lúc [giờ]", đó chỉ là 2 trong rất nhiều lựa chọn bên dưới, không phải công ' +
+              'thức mặc định:\n' +
+              '1. Lời cảnh báo/dặn dò trực tiếp gửi người xem ("Đừng bao giờ...", "Nếu bạn từng...").\n' +
+              '2. Một câu thoại/lời trích rợn người lấy nguyên văn từ truyện, để trong ngoặc kép.\n' +
+              '3. Một sự thật vô lý, nghịch lý khiến người đọc phải hỏi "sao lại thế được" ("Ngôi nhà đó ' +
+              'không có tầng 4", "Điện thoại vẫn đổ chuông dù tôi đã cắt SIM 3 năm trước").\n' +
+              '4. Câu kể ngôi thứ nhất gắn với một thời điểm/địa điểm cụ thể trong truyện.\n' +
+              '5. Một nghề nghiệp hoặc hoàn cảnh khác thường, kèm hệ quả bí ẩn đi cùng nó.\n' +
+              '6. Một câu hỏi ngỏ, chưa có lời giải, khiến người xem phải bấm vào mới biết.\n' +
+              '7. Một lời thú nhận hoặc tiết lộ nửa chừng, như đang kể dở cho bạn bè nghe.\n' +
+              '8. Bộ quy tắc/luật lệ kỳ lạ cần tuân theo — chỉ dùng khi thực sự khớp mạch truyện.\n\n' +
+              'Viết bằng ngôn ngữ đời thường, tránh mọi tính từ kêu sáo rỗng ("kinh hoàng", "rùng rợn", ' +
+              '"ám ảnh" dùng lặp đi lặp lại) — để chi tiết cụ thể tự nó tạo cảm giác rợn người, không cần ' +
+              'tính từ hô hào.',
           },
         },
         required: ['titles'],
@@ -197,15 +225,6 @@ function buildFieldGroupSchema(
   }
 }
 
-// The upstream is an OpenAI-compatible router (9router -> ollama/minimax),
-// not OpenAI itself, so `response_format: json_schema` (an OpenAI structured-
-// outputs extension) may be rejected outright. Ask for it first — when the
-// backend does honour it the output is exactly schema-shaped — and fall back
-// to plain `json_object` with the schema inlined in the prompt.
-function chatCompletionsUrl(baseUrl: string): string {
-  return `${baseUrl.replace(/\/+$/, '')}/chat/completions`;
-}
-
 // A json_object-mode (or bare-text) model routinely wraps its answer in a
 // ```json fence and/or prefixes a sentence — take the outermost {...} block.
 function extractJsonObject(content: string): string {
@@ -229,45 +248,30 @@ function normalizeEscapedNewlines(text: string): string {
   return text.replace(/\\r\\n|\\n/g, '\n');
 }
 
-interface OpenAiChatCompletionChunk {
-  choices: Array<{ delta?: { content?: string | null }; message?: { content?: string | null } }>;
+// Structured-output responses are plain strings, but a few providers return
+// the assistant message as an array of content parts — join the text parts.
+function messageContentToString(content: unknown): string {
+  if (typeof content === 'string') {
+    return content;
+  }
+  if (Array.isArray(content)) {
+    return content
+      .map((part) =>
+        part && typeof part === 'object' && typeof (part as { text?: unknown }).text === 'string'
+          ? (part as { text: string }).text
+          : '',
+      )
+      .join('');
+  }
+  return '';
 }
 
-// Some models behind the router stream Server-Sent Events (`data: {...}`
-// lines) even when `stream: false` is requested. Detect that shape and
-// reassemble the full content from the delta chunks instead of failing on
-// `response.json()`.
-async function parseChatCompletionsResponse(
-  response: Response,
-  model: string,
-): Promise<OpenAiChatCompletionResponse> {
-  const text = await response.text();
-  const trimmed = text.trimStart();
-  if (!trimmed.startsWith('data:')) {
-    try {
-      return JSON.parse(text) as OpenAiChatCompletionResponse;
-    } catch {
-      throw new Error(`${model} trả về response không phải JSON hợp lệ: ${text.slice(0, 300)}`);
-    }
-  }
+// A long narration plus the system prompt/schema can far exceed a default HTTP
+// timeout; give the model plenty of room before aborting.
+const REQUEST_TIMEOUT_MS = 10 * 60 * 1000;
 
-  let content = '';
-  for (const line of trimmed.split('\n')) {
-    const payload = line.trim().replace(/^data:\s*/, '');
-    if (!payload || payload === '[DONE]') continue;
-    try {
-      const chunk = JSON.parse(payload) as OpenAiChatCompletionChunk;
-      const piece = chunk.choices[0]?.delta?.content ?? chunk.choices[0]?.message?.content;
-      if (piece) content += piece;
-    } catch {
-      // Ignore malformed SSE lines (keep-alive comments, partial frames).
-    }
-  }
-  if (!content) {
-    throw new Error(`${model} trả về stream rỗng, không ghép được content.`);
-  }
-  return { choices: [{ message: { content } }] };
-}
+// Shown in OpenRouter's dashboard/rankings alongside this app's usage.
+const APP_TITLE = 'horror-aids';
 
 export async function generateYoutubeMetadataFields(input: {
   title: string;
@@ -275,13 +279,15 @@ export async function generateYoutubeMetadataFields(input: {
   videoDurationMs: number | null;
   fieldGroups: YoutubeMetadataFieldGroup[];
 }): Promise<Partial<YoutubeMetadataFields> & { model: string }> {
-  const apiKey = process.env.OPENAI_API_KEY;
+  const apiKey = process.env.OPENROUTER_API_KEY ?? process.env.OPENAI_API_KEY;
   if (!apiKey) {
-    throw new Error('OPENAI_API_KEY chưa được cấu hình — thêm vào .env.local trước khi generate metadata.');
+    throw new Error(
+      'OPENROUTER_API_KEY chưa được cấu hình — thêm vào .env.local trước khi generate metadata.',
+    );
   }
 
   const config = await readYoutubeMetadataConfig();
-  const baseUrl = process.env.OPENAI_BASE_URL?.trim() || config.baseUrl;
+  const baseUrl = process.env.OPENROUTER_BASE_URL?.trim() || config.baseUrl;
   const durationNote = input.videoDurationMs
     ? `Video dài khoảng ${Math.round(input.videoDurationMs / 60000)} phút.`
     : '';
@@ -303,19 +309,34 @@ export async function generateYoutubeMetadataFields(input: {
 
   const userPrompt = `Tên truyện: ${input.title}\n${durationNote}\n\nNội dung truyện:\n${truncateStoryText(input.storyText)}`;
 
-  const messages = [
+  const messages: ChatMessages[] = [
     { role: 'system', content: systemPrompt },
     { role: 'user', content: userPrompt },
   ];
 
-  async function request(mode: 'json_schema' | 'json_object'): Promise<Response> {
-    return fetch(chatCompletionsUrl(baseUrl), {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
+  // Pin routing when the config asks for it; leaving `only` unset lets
+  // OpenRouter load-balance across every endpoint serving the model.
+  const provider: ProviderPreferences = {
+    allowFallbacks: config.allowFallbacks,
+    ...(config.providerOnly.length > 0 ? { only: config.providerOnly } : {}),
+  };
+
+  const client = new OpenRouter({
+    apiKey,
+    serverURL: baseUrl,
+    appTitle: APP_TITLE,
+    httpReferer: process.env.OPENROUTER_HTTP_REFERER?.trim() || undefined,
+    timeoutMs: REQUEST_TIMEOUT_MS,
+  });
+
+  async function request(mode: 'json_schema' | 'json_object'): Promise<ChatResult> {
+    const responseFormat: ResponseFormat =
+      mode === 'json_schema'
+        ? { type: 'json_schema', jsonSchema: { name: 'youtube_metadata', strict: true, schema } }
+        : { type: 'json_object' };
+
+    const response = await client.chat.send({
+      chatRequest: {
         model: config.model,
         messages:
           mode === 'json_schema'
@@ -329,29 +350,39 @@ export async function generateYoutubeMetadataFields(input: {
                     `không giải thích):\n${JSON.stringify(schema)}`,
                 },
               ],
-        response_format:
-          mode === 'json_schema'
-            ? { type: 'json_schema', json_schema: { name: 'youtube_metadata', strict: true, schema } }
-            : { type: 'json_object' },
+        responseFormat,
+        provider,
         stream: false,
-      }),
+      },
     });
+
+    if (!('choices' in response)) {
+      throw new Error(`${config.model} trả về stream thay vì JSON hoàn chỉnh.`);
+    }
+    return response;
   }
 
   async function requestAndParse(
     mode: 'json_schema' | 'json_object',
   ): Promise<{ parsed: Partial<Omit<YoutubeMetadataFields, 'model'>>; content: string } | null> {
-    const response = await request(mode);
-    if (!response.ok) {
-      if (mode === 'json_schema' && response.status >= 400 && response.status < 500) {
-        return null;
+    let response: ChatResult;
+    try {
+      response = await request(mode);
+    } catch (error) {
+      if (mode === 'json_schema' && error instanceof OpenRouterError) {
+        // A model/provider that rejects structured outputs fails the whole
+        // request with a 4xx — the caller retries in json_object mode.
+        if (error.statusCode >= 400 && error.statusCode < 500) {
+          return null;
+        }
+        throw new Error(
+          `Request tới ${baseUrl} thất bại (${error.statusCode}): ${error.body.slice(0, 500)}`,
+        );
       }
-      const body = await response.text().catch(() => '');
-      throw new Error(`Request tới ${baseUrl} thất bại (${response.status}): ${body.slice(0, 500)}`);
+      throw error;
     }
 
-    const data = await parseChatCompletionsResponse(response, config.model);
-    const content = data.choices[0]?.message.content;
+    const content = messageContentToString(response.choices[0]?.message.content);
     if (!content) {
       throw new Error(`${config.model} trả về response rỗng, không có content.`);
     }
@@ -368,12 +399,11 @@ export async function generateYoutubeMetadataFields(input: {
     }
   }
 
-  // Some backends behind the router accept `response_format: json_schema`
-  // and reply 200 while silently ignoring the schema (e.g. answering with
-  // unrelated keys). A 200 status alone doesn't mean the shape is right, so
-  // verify every required field actually came back before trusting it —
-  // otherwise fall back to json_object mode, which embeds the schema as
-  // plain text in the prompt and has proven reliable for those models.
+  // Some providers accept `response_format: json_schema` and reply 200 while
+  // silently ignoring the schema (e.g. answering with unrelated keys). A 200
+  // status alone doesn't mean the shape is right, so verify every required
+  // field actually came back before trusting it — otherwise fall back to
+  // json_object mode, which embeds the schema as plain text in the prompt.
   const schemaAttempt = await requestAndParse('json_schema');
   const schemaAttemptValid =
     schemaAttempt !== null &&
